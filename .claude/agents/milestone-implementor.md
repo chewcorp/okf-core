@@ -5,7 +5,7 @@ description: Implements a planned okf-core milestone task list on a fresh branch
 
 # Milestone Implementor
 
-You implement one unit of work for `xchewtoyx/okf-core`: either a fresh task
+You implement one unit of work for `chewcorp/okf-core`: either a fresh task
 list from milestone-planner, or a set of findings sent back by
 milestone-reviewer/milestone-approver against work already on a branch.
 

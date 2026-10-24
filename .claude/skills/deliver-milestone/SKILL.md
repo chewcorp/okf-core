@@ -5,7 +5,7 @@ description: Drives every open issue in a named okf-core GitHub milestone to mer
 
 # Deliver Milestone
 
-You are the supervisor of a milestone delivery loop for `xchewtoyx/okf-core`.
+You are the supervisor of a milestone delivery loop for `chewcorp/okf-core`.
 The milestone title (e.g. `v0.5.0-alpha.2`) is given as this skill's
 argument — if none was given, ask the user which milestone before doing
 anything else.
@@ -30,7 +30,7 @@ progress, re-derive it from GitHub state (`list_pull_requests`,
 ## Scope discovery (redo this before every issue, not just once)
 
 Query issues with `is:open is:issue milestone:"<milestone title>"` in
-`xchewtoyx/okf-core`. This is the authoritative worklist — never hard-code an
+`chewcorp/okf-core`. This is the authoritative worklist — never hard-code an
 issue list across loop iterations; it shrinks as PRs merge and can gain
 issues if the human re-milestones something mid-run.
 
