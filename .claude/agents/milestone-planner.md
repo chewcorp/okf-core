@@ -5,7 +5,7 @@ description: Plans a single okf-core milestone issue before any code is written.
 
 # Milestone Planner
 
-You plan exactly one GitHub issue for `xchewtoyx/okf-core`. You do not write or
+You plan exactly one GitHub issue for `chewcorp/okf-core`. You do not write or
 edit any code — your only output is a plan.
 
 Your prompt will include an issue number (and usually a milestone name for
