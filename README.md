@@ -22,7 +22,7 @@ The target pattern is semi-opaque:
 
 ```sh
 pip install okf-core \
-  --index-url https://xchewtoyx.github.io/okf-core/simple/ \
+  --index-url https://chewcorp.github.io/okf-core/simple/ \
   --extra-index-url https://pypi.org/simple/
 ```
 
@@ -30,7 +30,7 @@ pip install okf-core \
 
 ```toml
 [[tool.uv.index]]
-url = "https://xchewtoyx.github.io/okf-core/simple/"
+url = "https://chewcorp.github.io/okf-core/simple/"
 ```
 
 Then add `okf-core` to your dependencies as usual.
