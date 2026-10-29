@@ -62,5 +62,6 @@ To discover more advanced capabilities, commands, and options:
 - **Graph reports**: `okf graph-report [--bundle NAME]... [--output DIR] [--json]` writes generated diagnostics (not wiki notes) under `wiki-graph-out/` by default (`SUMMARY.md`, `<slug>/GRAPH_REPORT.md`, `graph.json`). See `okf graph-report --help` and the README `okf graph-report` section for flags and scope.
 - **Link Maintenance**: Run `okf unlinked-mentions --help` to discover options for finding concept-title mentions that are not yet linked, and for writing selected suggestions back as Markdown links with `--apply`.
 - **Cache Maintenance**: If a command reports `cache_problems`, or `okf search` exits 2 asking for it, run `okf migrate-db --help` to see how to bring an `okf-cache.db` written by an older `okf-core` to the current schema version. Documents are never touched.
+- **Local Reading**: `okf serve` runs a read-only localhost HTTP server for the bundle (default http://127.0.0.1:8080/), exposing only permitted Markdown and directory `index.md` files — never `fleeting`, dot-segments, cache, or config files. See `okf serve --help`.
 - **Orientation Guide**: Run `okf orient` to print this onboarding guide.
 """
