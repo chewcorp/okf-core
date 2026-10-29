@@ -71,6 +71,7 @@ from okf_core.patching import (
     stamp_verified,
 )
 from okf_core.repair import plan_graph_repair, repair_graph
+from okf_core.serve import ServeError, create_server, serve_until_stopped
 from okf_core.write_safety import check_bundle_write_safety
 
 
@@ -1987,6 +1988,65 @@ def list_bundles_cmd(config_path: str | None) -> None:
 def orient_cmd() -> None:
     """Show essential onboarding guidance and discovery pointers."""
     click.echo(ORIENTATION_GUIDE)
+
+
+@cli.command("serve")
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    metavar="PATH",
+    help="Path to okf-core.toml (default: search upward from cwd).",
+)
+@click.option(
+    "--bundle",
+    "bundle_name",
+    default="default",
+    show_default=True,
+    metavar="NAME",
+    help="Named bundle from config.",
+)
+@click.option(
+    "--host",
+    default="127.0.0.1",
+    show_default=True,
+    metavar="HOST",
+    help="Interface to bind.",
+)
+@click.option(
+    "--port",
+    default=8080,
+    show_default=True,
+    type=int,
+    metavar="PORT",
+    help="Port to bind.",
+)
+def serve_cmd(
+    config_path: str | None,
+    bundle_name: str,
+    host: str,
+    port: int,
+) -> None:
+    """Serve one bundle read-only on localhost.
+
+    Runs a foreground HTTP server exposing only files permitted by the
+    bundle's include/exclude rules: ``fleeting`` segments, dot-segments, the
+    configured cache directory, and the config file itself are never served,
+    and paths outside the resolved bundle root are denied. Directories serve
+    their permitted ``index.md``; there is no directory listing and no
+    endpoint writes. Exits ``1`` if the address cannot be bound.
+    """
+    cfg, bundle = _load(config_path, bundle_name)
+    try:
+        httpd = create_server(bundle, cfg, host, port)
+    except ServeError as exc:
+        click.echo(f"Serve error: {exc}", err=True)
+        sys.exit(1)
+    click.echo(
+        f"Serving bundle {bundle.name!r} at http://{host}:{httpd.server_port}/ "
+        "(Ctrl-C to stop)"
+    )
+    serve_until_stopped(httpd)
 
 
 @cli.command("index")

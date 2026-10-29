@@ -446,6 +446,18 @@ okf orient
 
 Emits a well-structured Markdown document providing an onboarding overview, a common configuration example, and discovery pointers for further commands and options.
 
+### `okf serve`
+
+Serves one configured bundle over a foreground read-only localhost HTTP server, for reading a bundle in a browser without choosing a separate static-server root:
+
+```sh
+okf serve [--config PATH] [--bundle NAME] [--host HOST] [--port PORT]
+```
+
+Binds `127.0.0.1:8080` by default, prints the reachable URL (`http://HOST:PORT/`), and serves until Ctrl-C stops it cleanly. An occupied port exits `1` with a clear error; configuration errors and unknown bundles exit `2`.
+
+The server enforces the bundle's configured `include`/`exclude` rules per request: only files matched by `include` and not matched by `exclude` are served, as `text/markdown` for `.md`/`.markdown` or a guessed media type otherwise. Directory requests redirect to a trailing slash and then serve that directory's permitted `index.md`; there is never a directory listing. On top of the configured rules, request-time hard denies return 404 for any `fleeting` segment at any depth, any dot-segment (`.git`, `.env`, and similar), anything under the resolved `okf_cache_dir`, and the config file itself. Excluded, missing, and out-of-root requests all get the same 404, including percent-encoded traversal (`%2e%2e`) and symlinks escaping the bundle root. Only GET and HEAD are supported — write methods are rejected with 405 and no endpoint writes to the bundle.
+
 ## Python Library API
 
 Import `okf_core` to programmatically interact with bundles:
