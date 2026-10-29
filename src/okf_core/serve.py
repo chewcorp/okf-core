@@ -21,7 +21,6 @@ from __future__ import annotations
 import fnmatch
 import mimetypes
 import os
-import re
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
@@ -43,33 +42,33 @@ class _ServeContext:
     """Precomputed serving rules for one bundle."""
 
     root: Path
-    include: tuple[re.Pattern[str], ...]
+    include: tuple[tuple[str, ...], ...]
     exclude: tuple[str, ...]
     cache_dir: Path | None
     config_path: Path | None
 
 
-def _compile_glob(pattern: str) -> re.Pattern[str]:
-    """Compile a ``Path.glob``-style pattern for matching a relative posix path.
+def _include_match(parts: tuple[str, ...], pattern: tuple[str, ...]) -> bool:
+    """Match path segments against ``Path.glob``-style pattern segments.
 
-    Segments are translated by ``fnmatch.translate`` (the same glob
-    semantics ``Path.glob`` uses for ``*``/``?``/``[seq]``); the wrapper
-    text is stripped and segments are joined on ``/``. ``**`` as a whole
-    segment matches zero or more directories, so ``**/*.md`` covers
-    ``x.md`` at the root -- the case ``PurePath.match`` gets wrong and
-    ``PurePath.full_match`` only fixes on Python 3.13+.
+    ``fnmatch.fnmatchcase`` gives the segment semantics ``Path.glob``
+    uses for ``*``/``?``/``[seq]`` -- ``*`` cannot cross a directory
+    boundary. A whole-segment ``**`` matches zero or more segments, so
+    ``**/*.md`` covers ``x.md`` at the root -- the case ``PurePath.match``
+    gets wrong and ``PurePath.full_match`` only fixes on Python 3.13+.
     """
-    parts = pattern.split("/")
-    out: list[str] = []
-    for i, part in enumerate(parts):
-        if part == "**":
-            out.append(".*" if i == len(parts) - 1 else "(?:[^/]+/)*")
-        else:
-            # fnmatch.translate yields "(?s:<body>)\\Z"; keep the body.
-            out.append(fnmatch.translate(part)[4:-3])
-            if i < len(parts) - 1:
-                out.append("/")
-    return re.compile("".join(out))
+    if not pattern:
+        return not parts
+    head = pattern[0]
+    if head == "**":
+        return any(
+            _include_match(parts[i:], pattern[1:]) for i in range(len(parts) + 1)
+        )
+    return (
+        bool(parts)
+        and fnmatch.fnmatchcase(parts[0], head)
+        and _include_match(parts[1:], pattern[1:])
+    )
 
 
 def _is_denied(rel: PurePosixPath) -> bool:
@@ -81,8 +80,7 @@ def _is_denied(rel: PurePosixPath) -> bool:
 
 
 def _is_permitted(rel: PurePosixPath, ctx: _ServeContext) -> bool:
-    text = rel.as_posix()
-    if not any(rx.fullmatch(text) for rx in ctx.include):
+    if not any(_include_match(rel.parts, pat) for pat in ctx.include):
         return False
     return not any(rel.match(pattern) for pattern in ctx.exclude)
 
@@ -254,7 +252,7 @@ def create_server(
         raise ServeError(f"Bundle root does not exist: {bundle.bundle_root}")
     ctx = _ServeContext(
         root=bundle.bundle_root,
-        include=tuple(_compile_glob(p) for p in bundle.include),
+        include=tuple(tuple(p.split("/")) for p in bundle.include),
         exclude=bundle.exclude,
         cache_dir=bundle.okf_cache_dir,
         config_path=config.config_path if config is not None else None,

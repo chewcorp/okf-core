@@ -22,7 +22,7 @@ from okf_core.cli import cli
 from okf_core.config import load_config
 from okf_core.serve import (
     ServeError,
-    _compile_glob,
+    _include_match,
     create_server,
     serve_until_stopped,
 )
@@ -370,17 +370,26 @@ def test_serve_until_stopped_closes_on_keyboard_interrupt() -> None:
     assert httpd.closed
 
 
-def test_compile_glob_question_mark_matches_one_segment_char() -> None:
-    rx = _compile_glob("a?.md")
-    assert rx.fullmatch("ab.md") is not None
-    assert rx.fullmatch("abb.md") is None
-    assert rx.fullmatch("a/b.md") is None
+def test_include_match_star_does_not_cross_directories() -> None:
+    assert _include_match(("public", "page.md"), ("public", "*.md"))
+    assert not _include_match(("public", "private", "hidden.md"), ("public", "*.md"))
 
 
-def test_compile_glob_leading_bracket_is_literal() -> None:
-    rx = _compile_glob("draft-[]].md")
-    assert rx.fullmatch("draft-].md") is not None
-    assert rx.fullmatch("draft-x.md") is None
+def test_include_match_double_star_matches_zero_or_more_segments() -> None:
+    assert _include_match(("x.md",), ("**", "*.md"))
+    assert _include_match(("a", "b", "x.md"), ("**", "*.md"))
+    assert _include_match(("a", "b", "x.md"), ("a", "**", "*.md"))
+    assert not _include_match(("a", "x.txt"), ("**", "*.md"))
+
+
+def test_include_match_question_mark_matches_one_segment_char() -> None:
+    assert _include_match(("ab.md",), ("a?.md",))
+    assert not _include_match(("abb.md",), ("a?.md",))
+
+
+def test_include_match_leading_bracket_is_literal() -> None:
+    assert _include_match(("draft-].md",), ("draft-[]].md",))
+    assert not _include_match(("draft-x.md",), ("draft-[]].md",))
 
 
 def test_malformed_include_glob_matches_nothing(project: Path) -> None:
@@ -391,10 +400,9 @@ def test_malformed_include_glob_matches_nothing(project: Path) -> None:
     httpd.server_close()
 
 
-def test_compile_glob_malformed_class_never_matches() -> None:
-    rx = _compile_glob("bad[z-a].md")
-    assert rx.fullmatch("badz.md") is None
-    assert rx.fullmatch("bad-a.md") is None
+def test_include_match_malformed_class_never_matches() -> None:
+    assert not _include_match(("badz.md",), ("bad[z-a].md",))
+    assert not _include_match(("bad-a.md",), ("bad[z-a].md",))
 
 
 def test_out_of_range_port_rejected(project: Path) -> None:
@@ -412,16 +420,14 @@ def test_out_of_range_port_rejected(project: Path) -> None:
     assert "range" in result.output
 
 
-def test_compile_glob_character_class_negation() -> None:
-    rx = _compile_glob("draft-[!0-9].md")
-    assert rx.fullmatch("draft-x.md") is not None
-    assert rx.fullmatch("draft-7.md") is None
+def test_include_match_character_class_negation() -> None:
+    assert _include_match(("draft-x.md",), ("draft-[!0-9].md",))
+    assert not _include_match(("draft-7.md",), ("draft-[!0-9].md",))
 
 
-def test_compile_glob_unterminated_class_is_literal() -> None:
-    rx = _compile_glob("draft[.md")
-    assert rx.fullmatch("draft[.md") is not None
-    assert rx.fullmatch("draftX.md") is None
+def test_include_match_unterminated_class_is_literal() -> None:
+    assert _include_match(("draft[.md",), ("draft[.md",))
+    assert not _include_match(("draftX.md",), ("draft[.md",))
 
 
 def test_unknown_bundle_exits_2(project: Path) -> None:
