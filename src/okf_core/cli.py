@@ -2017,7 +2017,7 @@ def orient_cmd() -> None:
     "--port",
     default=8080,
     show_default=True,
-    type=int,
+    type=click.IntRange(0, 65535),
     metavar="PORT",
     help="Port to bind.",
 )

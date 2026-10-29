@@ -42,7 +42,7 @@ class _ServeContext:
 
     root: Path
     include: tuple[re.Pattern[str], ...]
-    exclude: tuple[re.Pattern[str], ...]
+    exclude: tuple[str, ...]
     cache_dir: Path | None
     config_path: Path | None
 
@@ -58,15 +58,20 @@ def _translate_segment(part: str) -> str:
         elif ch == "?":
             out.append("[^/]")
         elif ch == "[":
-            j = part.find("]", i + 1)
-            if j == -1:
+            j = i + 1
+            if j < len(part) and part[j] == "!":
+                j += 1
+            if j < len(part) and part[j] == "]":
+                j += 1
+            k = part.find("]", j)
+            if k == -1:
                 out.append(re.escape(ch))
             else:
-                cls = part[i + 1 : j]
+                cls = part[i + 1 : k]
                 if cls.startswith("!"):
                     cls = "^" + cls[1:]
                 out.append("[" + cls.replace("\\", "\\\\") + "]")
-                i = j
+                i = k
         else:
             out.append(re.escape(ch))
         i += 1
@@ -104,30 +109,45 @@ def _is_permitted(rel: PurePosixPath, ctx: _ServeContext) -> bool:
     text = rel.as_posix()
     if not any(rx.fullmatch(text) for rx in ctx.include):
         return False
-    return not any(rx.fullmatch(text) for rx in ctx.exclude)
+    return not any(rel.match(pattern) for pattern in ctx.exclude)
 
 
-def _resolve_request(url: str, ctx: _ServeContext) -> tuple[Path, PurePosixPath] | None:
-    """Resolve a request URL to a candidate path inside the root, or None.
-
-    Applies containment (traversal, encoded traversal, symlink escape) and
-    the hard denies. Include/exclude permission is checked separately by the
-    caller so directories can be handled first.
-    """
-    decoded = unquote(urlsplit(url).path)
-    parts = [p for p in decoded.split("/") if p not in ("", ".")]
-    if any(p == ".." or "\\" in p or "\x00" in p for p in parts):
-        return None
+def _served_rel(candidate: Path, ctx: _ServeContext) -> PurePosixPath | None:
+    """Return the root-relative path a resolved candidate may be served as."""
     try:
-        candidate = ctx.root.joinpath(*parts).resolve(strict=False)
         rel = PurePosixPath(candidate.relative_to(ctx.root).as_posix())
-    except (OSError, ValueError):
+    except ValueError:
         return None
     if _is_denied(rel):
         return None
     if ctx.cache_dir is not None and candidate.is_relative_to(ctx.cache_dir):
         return None
     if ctx.config_path is not None and candidate == ctx.config_path:
+        return None
+    return rel
+
+
+def _resolve_request(url: str, ctx: _ServeContext) -> tuple[Path, PurePosixPath] | None:
+    """Resolve a request URL to a candidate path inside the root, or None.
+
+    Applies containment (traversal, encoded traversal, symlink escape) and
+    the hard denies on both the request path and the resolved target, so a
+    ``fleeting``/dot-segment in the URL or in the target is denied alike.
+    Include/exclude permission is checked separately by the caller so
+    directories can be handled first.
+    """
+    decoded = unquote(urlsplit(url).path)
+    parts = [p for p in decoded.split("/") if p not in ("", ".")]
+    if any(p == ".." or "\\" in p or "\x00" in p for p in parts):
+        return None
+    if _is_denied(PurePosixPath(*parts)):
+        return None
+    try:
+        candidate = ctx.root.joinpath(*parts).resolve(strict=False)
+    except OSError:
+        return None
+    rel = _served_rel(candidate, ctx)
+    if rel is None:
         return None
     return candidate, rel
 
@@ -150,6 +170,17 @@ class _BundleHTTPServer(ThreadingHTTPServer):
 class _BundleRequestHandler(BaseHTTPRequestHandler):
     server: _BundleHTTPServer
     protocol_version = "HTTP/1.1"
+
+    def setup(self) -> None:
+        super().setup()
+        # Keep-alive connections hold one thread each; cap their idle time.
+        self.request.settimeout(30)
+
+    def handle(self) -> None:
+        try:
+            super().handle()
+        except TimeoutError:
+            pass
 
     def do_GET(self) -> None:
         self._serve(write_body=True)
@@ -194,9 +225,17 @@ class _BundleRequestHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Length", "0")
                 self.end_headers()
                 return
-            index = candidate / "index.md"
-            index_rel = rel / "index.md"
-            if not index.is_file() or not _is_permitted(index_rel, ctx):
+            try:
+                index = (candidate / "index.md").resolve(strict=False)
+            except OSError:
+                self.send_error(404)
+                return
+            index_rel = _served_rel(index, ctx)
+            if (
+                index_rel is None
+                or not index.is_file()
+                or not _is_permitted(index_rel, ctx)
+            ):
                 self.send_error(404)
                 return
             candidate = index
@@ -204,14 +243,23 @@ class _BundleRequestHandler(BaseHTTPRequestHandler):
             self.send_error(404)
             return
 
-        try:
-            data = candidate.read_bytes()
-        except OSError:
-            self.send_error(404)
-            return
+        if write_body:
+            try:
+                data = candidate.read_bytes()
+            except OSError:
+                self.send_error(404)
+                return
+            size = len(data)
+        else:
+            try:
+                size = candidate.stat().st_size
+            except OSError:
+                self.send_error(404)
+                return
+            data = b""
         self.send_response(200)
         self.send_header("Content-Type", _content_type(candidate))
-        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Content-Length", str(size))
         self.end_headers()
         if write_body:
             self.wfile.write(data)
@@ -226,10 +274,16 @@ def create_server(
     """Bind the read-only server for ``bundle``; raise ServeError on failure."""
     if not bundle.bundle_root.is_dir():
         raise ServeError(f"Bundle root does not exist: {bundle.bundle_root}")
+    try:
+        include = tuple(_compile_glob(p) for p in bundle.include)
+    except re.error as exc:
+        raise ServeError(
+            f"Invalid include glob for bundle {bundle.name!r}: {exc}"
+        ) from exc
     ctx = _ServeContext(
         root=bundle.bundle_root,
-        include=tuple(_compile_glob(p) for p in bundle.include),
-        exclude=tuple(_compile_glob(p) for p in bundle.exclude),
+        include=include,
+        exclude=bundle.exclude,
         cache_dir=bundle.okf_cache_dir,
         config_path=config.config_path if config is not None else None,
     )

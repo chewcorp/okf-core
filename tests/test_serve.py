@@ -31,7 +31,7 @@ _CONFIG = """\
 [bundles.default]
 bundle_root = "bundle"
 include = ["**/*.md", "**/*.toml"]
-exclude = ["secret/**", "draft-[0-9].md", "temp-?.md"]
+exclude = ["secret/**", "draft-[0-9].md", "temp-?.md", "nested-secret.md"]
 okf_cache_dir = "okf-cache"
 
 [bundles.other]
@@ -53,6 +53,7 @@ def project(tmp_path: Path) -> Path:
     _write(root / "bundle" / "notes.txt", "plain text\n")
     _write(root / "bundle" / "sub" / "index.md", "# sub index\n")
     _write(root / "bundle" / "sub" / "inner.md", "# inner\n")
+    _write(root / "bundle" / "sub" / "nested-secret.md", "# nested secret\n")
     _write(root / "bundle" / "secret" / "hidden.md", "# hidden\n")
     _write(root / "bundle" / "draft-7.md", "# excluded draft\n")
     _write(root / "bundle" / "draft-x.md", "# included draft\n")
@@ -172,6 +173,7 @@ def test_directory_without_index_returns_404(project: Path) -> None:
         "/secret/hidden.md",  # configured exclude glob
         "/draft-7.md",  # excluded via character-class glob
         "/temp-9.md",  # excluded via '?' glob
+        "/sub/nested-secret.md",  # slashless exclude matches at any depth
         "/fleeting/note.md",  # fleeting at depth 1
         "/deep/fleeting/x.md",  # fleeting nested
         "/.git/objects/aa.md",  # dot-segment under root
@@ -229,6 +231,60 @@ def test_symlink_escape_returns_404(project: Path) -> None:
     with _running_server(project) as address:
         status, _, _ = _request(address, "/evil.md")
     assert status == 404
+
+
+def test_index_md_symlink_to_excluded_returns_404(project: Path) -> None:
+    if not hasattr(os, "symlink"):
+        pytest.skip("symlinks unavailable")
+    (project / "bundle" / "alias").mkdir()
+    os.symlink("../secret/hidden.md", project / "bundle" / "alias" / "index.md")
+    with _running_server(project) as address:
+        status, _, _ = _request(address, "/alias/")
+    assert status == 404
+
+
+def test_index_md_symlink_outside_root_returns_404(project: Path) -> None:
+    if not hasattr(os, "symlink"):
+        pytest.skip("symlinks unavailable")
+    (project / "bundle" / "outdir").mkdir()
+    os.symlink("../../outside.md", project / "bundle" / "outdir" / "index.md")
+    with _running_server(project) as address:
+        status, _, _ = _request(address, "/outdir/")
+    assert status == 404
+
+
+def test_denied_segment_symlink_alias_returns_404(project: Path) -> None:
+    """A denied segment in the request path denies even a permitted target."""
+    if not hasattr(os, "symlink"):
+        pytest.skip("symlinks unavailable")
+    (project / "bundle" / "x").mkdir()
+    os.symlink("sub", project / "bundle" / ".dotlink")
+    os.symlink("../sub", project / "bundle" / "x" / "fleeting")
+    with _running_server(project) as address:
+        status_dot, _, _ = _request(address, "/.dotlink/inner.md")
+        status_fleeting, _, _ = _request(address, "/x/fleeting/inner.md")
+    assert status_dot == 404
+    assert status_fleeting == 404
+
+
+def test_symlink_into_denied_directory_returns_404(project: Path) -> None:
+    """A clean request path resolving into ``fleeting`` is still denied."""
+    if not hasattr(os, "symlink"):
+        pytest.skip("symlinks unavailable")
+    os.symlink("fleeting", project / "bundle" / "fleeting-link")
+    with _running_server(project) as address:
+        status, _, _ = _request(address, "/fleeting-link/note.md")
+    assert status == 404
+
+
+def test_permitted_symlink_alias_is_served(project: Path) -> None:
+    if not hasattr(os, "symlink"):
+        pytest.skip("symlinks unavailable")
+    os.symlink("sub/inner.md", project / "bundle" / "alias-page.md")
+    with _running_server(project) as address:
+        status, _, body = _request(address, "/alias-page.md")
+    assert status == 200
+    assert body == b"# inner\n"
 
 
 def test_query_string_is_ignored(project: Path) -> None:
@@ -310,6 +366,41 @@ def test_serve_until_stopped_closes_on_keyboard_interrupt() -> None:
     httpd = _Interrupted()
     serve_until_stopped(httpd)  # type: ignore[arg-type]
     assert httpd.closed
+
+
+def test_compile_glob_question_mark_matches_one_segment_char() -> None:
+    rx = _compile_glob("a?.md")
+    assert rx.fullmatch("ab.md") is not None
+    assert rx.fullmatch("abb.md") is None
+    assert rx.fullmatch("a/b.md") is None
+
+
+def test_compile_glob_leading_bracket_is_literal() -> None:
+    rx = _compile_glob("draft-[]].md")
+    assert rx.fullmatch("draft-].md") is not None
+    assert rx.fullmatch("draft-x.md") is None
+
+
+def test_invalid_include_glob_fails_clearly(project: Path) -> None:
+    cfg = load_config(config_path=project / "okf-core.toml")
+    bundle = cfg.bundles["default"].model_copy(update={"include": ("bad[z-a].md",)})
+    with pytest.raises(ServeError, match="Invalid include glob"):
+        create_server(bundle, cfg, "127.0.0.1", 0)
+
+
+def test_out_of_range_port_rejected(project: Path) -> None:
+    result = CliRunner().invoke(
+        cli,
+        [
+            "serve",
+            "--config",
+            str(project / "okf-core.toml"),
+            "--port",
+            "65536",
+        ],
+    )
+    assert result.exit_code == 2
+    assert "range" in result.output
 
 
 def test_compile_glob_character_class_negation() -> None:
