@@ -19,6 +19,7 @@ slash and then serves that directory's permitted ``index.md``, or 404.
 from __future__ import annotations
 
 import mimetypes
+import os
 import re
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -252,7 +253,10 @@ class _BundleRequestHandler(BaseHTTPRequestHandler):
             size = len(data)
         else:
             try:
-                size = candidate.stat().st_size
+                # Open rather than stat alone so HEAD agrees with GET on
+                # unreadable files without loading the body.
+                with candidate.open("rb") as fh:
+                    size = os.fstat(fh.fileno()).st_size
             except OSError:
                 self.send_error(404)
                 return

@@ -220,9 +220,11 @@ def test_unreadable_file_returns_404(project: Path) -> None:
     try:
         with _running_server(project) as address:
             status, _, _ = _request(address, "/locked.md")
+            head_status, _, _ = _request(address, "/locked.md", method="HEAD")
     finally:
         target.chmod(0o644)
     assert status == 404
+    assert head_status == 404
 
 
 def test_symlink_escape_returns_404(project: Path) -> None:
