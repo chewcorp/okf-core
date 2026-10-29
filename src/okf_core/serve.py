@@ -18,6 +18,7 @@ slash and then serves that directory's permitted ``index.md``, or 404.
 
 from __future__ import annotations
 
+import fnmatch
 import mimetypes
 import os
 import re
@@ -48,43 +49,15 @@ class _ServeContext:
     config_path: Path | None
 
 
-def _translate_segment(part: str) -> str:
-    """Translate one glob segment (``*``, ``?``, ``[seq]``) to regex text."""
-    out: list[str] = []
-    i = 0
-    while i < len(part):
-        ch = part[i]
-        if ch == "*":
-            out.append("[^/]*")
-        elif ch == "?":
-            out.append("[^/]")
-        elif ch == "[":
-            j = i + 1
-            if j < len(part) and part[j] == "!":
-                j += 1
-            if j < len(part) and part[j] == "]":
-                j += 1
-            k = part.find("]", j)
-            if k == -1:
-                out.append(re.escape(ch))
-            else:
-                cls = part[i + 1 : k]
-                if cls.startswith("!"):
-                    cls = "^" + cls[1:]
-                out.append("[" + cls.replace("\\", "\\\\") + "]")
-                i = k
-        else:
-            out.append(re.escape(ch))
-        i += 1
-    return "".join(out)
-
-
 def _compile_glob(pattern: str) -> re.Pattern[str]:
     """Compile a ``Path.glob``-style pattern for matching a relative posix path.
 
-    ``**`` as a whole segment matches zero or more directories, so
-    ``**/*.md`` covers ``x.md`` at the root -- the case ``PurePath.match``
-    gets wrong on older Pythons.
+    Segments are translated by ``fnmatch.translate`` (the same glob
+    semantics ``Path.glob`` uses for ``*``/``?``/``[seq]``); the wrapper
+    text is stripped and segments are joined on ``/``. ``**`` as a whole
+    segment matches zero or more directories, so ``**/*.md`` covers
+    ``x.md`` at the root -- the case ``PurePath.match`` gets wrong and
+    ``PurePath.full_match`` only fixes on Python 3.13+.
     """
     parts = pattern.split("/")
     out: list[str] = []
@@ -92,7 +65,8 @@ def _compile_glob(pattern: str) -> re.Pattern[str]:
         if part == "**":
             out.append(".*" if i == len(parts) - 1 else "(?:[^/]+/)*")
         else:
-            out.append(_translate_segment(part))
+            # fnmatch.translate yields "(?s:<body>)\\Z"; keep the body.
+            out.append(fnmatch.translate(part)[4:-3])
             if i < len(parts) - 1:
                 out.append("/")
     return re.compile("".join(out))
@@ -278,15 +252,9 @@ def create_server(
     """Bind the read-only server for ``bundle``; raise ServeError on failure."""
     if not bundle.bundle_root.is_dir():
         raise ServeError(f"Bundle root does not exist: {bundle.bundle_root}")
-    try:
-        include = tuple(_compile_glob(p) for p in bundle.include)
-    except re.error as exc:
-        raise ServeError(
-            f"Invalid include glob for bundle {bundle.name!r}: {exc}"
-        ) from exc
     ctx = _ServeContext(
         root=bundle.bundle_root,
-        include=include,
+        include=tuple(_compile_glob(p) for p in bundle.include),
         exclude=bundle.exclude,
         cache_dir=bundle.okf_cache_dir,
         config_path=config.config_path if config is not None else None,

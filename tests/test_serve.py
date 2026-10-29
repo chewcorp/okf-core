@@ -383,11 +383,18 @@ def test_compile_glob_leading_bracket_is_literal() -> None:
     assert rx.fullmatch("draft-x.md") is None
 
 
-def test_invalid_include_glob_fails_clearly(project: Path) -> None:
+def test_malformed_include_glob_matches_nothing(project: Path) -> None:
+    """A class fnmatch rejects matches nothing, like ``Path.glob``."""
     cfg = load_config(config_path=project / "okf-core.toml")
     bundle = cfg.bundles["default"].model_copy(update={"include": ("bad[z-a].md",)})
-    with pytest.raises(ServeError, match="Invalid include glob"):
-        create_server(bundle, cfg, "127.0.0.1", 0)
+    httpd = create_server(bundle, cfg, "127.0.0.1", 0)
+    httpd.server_close()
+
+
+def test_compile_glob_malformed_class_never_matches() -> None:
+    rx = _compile_glob("bad[z-a].md")
+    assert rx.fullmatch("badz.md") is None
+    assert rx.fullmatch("bad-a.md") is None
 
 
 def test_out_of_range_port_rejected(project: Path) -> None:
