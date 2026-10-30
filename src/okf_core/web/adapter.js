@@ -171,11 +171,15 @@
   }
 
   /* Strip active content from rendered bundle HTML: scripts, embeds,
-   * forms, navigation-ish elements, on* handlers and javascript:/vbscript:
-   * URLs. Bundle Markdown must never execute code in the page. */
+   * forms, navigation-ish elements, on* handlers, javascript:/vbscript:
+   * URLs and SVG animation elements (which can retarget a link after
+   * sanitization). Bundle Markdown must never execute code in the page. */
   function sanitize(root) {
     root
-      .querySelectorAll("script, iframe, object, embed, form, link, meta, base")
+      .querySelectorAll(
+        "script, iframe, object, embed, form, link, meta, base, " +
+          "animate, animatemotion, animatetransform, set"
+      )
       .forEach(function (el) {
         el.remove();
       });
@@ -214,7 +218,7 @@
       linked = true;
     } else if (entry.resource && /\.(md|markdown)(#.*)?$/.test(entry.resource)) {
       var parts = entry.resource.split("#");
-      var resolved = resolveBundlePath(parts[0], fromPath);
+      var resolved = resolveBundlePath(decodeSafe(parts[0]), fromPath);
       if (resolved !== null) {
         var rel = document.createElement("a");
         rel.href = "#/" + encodeRoutePath(resolved) + (parts[1] ? "#" + parts[1] : "");
@@ -479,25 +483,45 @@
     nav.appendChild(holder);
   }
 
+  function loadIndexNav() {
+    return fetch("/index.md", { cache: "no-store" })
+      .then(function (res) {
+        return res.ok ? res.text() : "";
+      })
+      .then(function (text) {
+        if (text) {
+          navFromIndex(text);
+        }
+      });
+  }
+
+  function navWarning(text) {
+    var p = document.createElement("p");
+    p.className = "nav-warning";
+    p.textContent = text;
+    nav.appendChild(p);
+  }
+
   function buildNav() {
     fetch("/concepts.json", { cache: "no-store" })
       .then(function (res) {
-        // A malformed catalog must not hide navigation: fall back to index.md.
-        return res.ok ? res.json().catch(function () { return null; }) : null;
-      })
-      .then(function (json) {
-        if (json && navFromConcepts(json)) {
-          return;
+        if (!res.ok) {
+          // No catalog at all: index.md is the normal alternative driver.
+          return loadIndexNav();
         }
-        return fetch("/index.md", { cache: "no-store" })
-          .then(function (res) {
-            return res.ok ? res.text() : "";
-          })
-          .then(function (text) {
-            if (text) {
-              navFromIndex(text);
+        return res.json().then(
+          function (json) {
+            if (json && navFromConcepts(json)) {
+              return;
             }
-          });
+            navWarning("concepts.json has no usable entries; showing index navigation");
+            return loadIndexNav();
+          },
+          function () {
+            navWarning("concepts.json is unreadable; showing index navigation");
+            return loadIndexNav();
+          }
+        );
       })
       .catch(function () {
         /* nav is optional; the document still renders */

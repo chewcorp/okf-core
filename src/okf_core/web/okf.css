@@ -50,3 +50,4 @@ a.okf-broken::after { content: " (broken)"; font-size: 0.8em; }
   color: var(--muted);
 }
 #status h1 { color: #1a1a1a; }
+#nav .nav-warning { color: var(--broken); font-size: 0.85rem; }

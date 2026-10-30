@@ -48,6 +48,8 @@ sources:
     resource: https://example.com/spec
     title: External spec
   - resource: shared/ledger.md#shared-ledger
+  - resource: odd%23name.md
+    title: Odd source file
 ---
 
 # Alpha Root Note
@@ -175,6 +177,8 @@ _HOSTILE = """\
 <img src="x" onerror="window.__err = 1">
 
 ![remote](https://example.com/track.png)
+
+<svg><a href="/safe"><set attributeName="href" to="javascript:window.__xss=1"/><animate attributeName="href" to="javascript:window.__xss=1"/><text>go</text></a></svg>
 """
 
 _BETA_INDEX = """\
@@ -450,6 +454,7 @@ def test_malformed_concepts_json_falls_back_to_index_nav(
     with _running_server(project) as address:
         page = _page(browser, address)
         page.wait_for_selector("#nav a[href$='root-note.md']", timeout=10_000)
+        assert "unreadable" in page.inner_text("#nav")
         page.close()
 
 
@@ -480,7 +485,16 @@ def test_rendered_html_is_sanitized(browser: Browser, project: Path) -> None:
         assert page.evaluate("() => window.__xss === undefined")
         assert page.evaluate("() => window.__err === undefined")
         assert page.locator("article script").count() == 0
+        assert page.locator("article set, article animate").count() == 0
         remote_img = page.locator("article img.okf-broken")
         assert remote_img.count() == 1
         assert remote_img.get_attribute("src") is None
+        page.close()
+
+
+def test_encoded_source_link_resolves(browser: Browser, project: Path) -> None:
+    with _running_server(project) as address:
+        page = _page(browser, address, "#/root-note.md")
+        page.click("#fm-sources >> text=Odd source file")
+        page.wait_for_selector("article:has-text('Odd Name')", timeout=10_000)
         page.close()
