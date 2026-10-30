@@ -30,13 +30,14 @@
     if (!hash.startsWith("#/")) {
       return null;
     }
-    var rest = decodeSafe(hash.slice(2));
+    var rest = hash.slice(2);
     var frag = "";
     var cut = rest.indexOf("#");
     if (cut >= 0) {
-      frag = rest.slice(cut + 1);
+      frag = decodeSafe(rest.slice(cut + 1));
       rest = rest.slice(0, cut);
     }
+    rest = decodeSafe(rest);
     if (rest === "" || rest.endsWith("/")) {
       rest += "index.md";
     }
@@ -91,10 +92,25 @@
     return /\.(md|markdown)$/i.test(path);
   }
 
+  /* Bundle-relative path -> URL path: encode per segment so `#`, `?` and
+   * other reserved characters in filenames survive into routes/fetches. */
+  function encodeRoutePath(path) {
+    return path.split("/").map(encodeURIComponent).join("/");
+  }
+
   /* Rewrite a link/image target into an adapter route or raw bundle URL. */
   function rewriteTarget(el, attr, fromPath) {
     var raw = el.getAttribute(attr);
-    if (!raw || /^(https?:|mailto:|tel:|data:)/i.test(raw)) {
+    if (!raw) {
+      return;
+    }
+    if (/^(https?:|mailto:|tel:|data:)/i.test(raw)) {
+      if (attr === "src" && /^https?:/i.test(raw)) {
+        // Remote images would send the reader's request to a third party.
+        el.removeAttribute("src");
+        el.classList.add("okf-broken");
+        el.title = "remote image not fetched (external request blocked)";
+      }
       return;
     }
     if (attr === "href" && raw.startsWith("#/")) {
@@ -111,7 +127,7 @@
     href = decodeSafe(href);
     if (href === "") {
       // Pure fragment: same-document anchor.
-      el.setAttribute(attr, "#/" + fromPath + frag);
+      el.setAttribute(attr, "#/" + encodeRoutePath(fromPath) + frag);
       return;
     }
     var resolved = resolveBundlePath(href, fromPath);
@@ -124,9 +140,9 @@
       return;
     }
     if (attr === "href" && (isMarkdown(resolved) || raw.endsWith("/") || resolved === "")) {
-      el.setAttribute(attr, "#/" + resolved + frag);
+      el.setAttribute(attr, "#/" + encodeRoutePath(resolved) + frag);
     } else {
-      el.setAttribute(attr, "/" + encodeURI(resolved));
+      el.setAttribute(attr, "/" + encodeRoutePath(resolved));
     }
   }
 
@@ -143,10 +159,39 @@
     } catch (err) {
       data = null;
     }
+    if (!data || typeof data !== "object") {
+      // Unparseable frontmatter stays visible as raw text rather than
+      // disappearing silently.
+      return { frontmatter: null, body: text };
+    }
     return {
-      frontmatter: data && typeof data === "object" ? data : null,
+      frontmatter: data,
       body: text.slice(match[0].length),
     };
+  }
+
+  /* Strip active content from rendered bundle HTML: scripts, embeds,
+   * forms, navigation-ish elements, on* handlers and javascript:/vbscript:
+   * URLs. Bundle Markdown must never execute code in the page. */
+  function sanitize(root) {
+    root
+      .querySelectorAll("script, iframe, object, embed, form, link, meta, base")
+      .forEach(function (el) {
+        el.remove();
+      });
+    root.querySelectorAll("*").forEach(function (el) {
+      Array.prototype.slice.call(el.attributes).forEach(function (attr) {
+        var name = attr.name.toLowerCase();
+        var value = String(attr.value).replace(/\s/g, "").toLowerCase();
+        if (
+          name.startsWith("on") ||
+          ((name === "href" || name === "src" || name === "action" || name === "formaction") &&
+            (value.startsWith("javascript:") || value.startsWith("vbscript:")))
+        ) {
+          el.removeAttribute(attr.name);
+        }
+      });
+    });
   }
 
   function sourceEntryHtml(entry, fromPath) {
@@ -168,10 +213,11 @@
       li.appendChild(a);
       linked = true;
     } else if (entry.resource && /\.(md|markdown)(#.*)?$/.test(entry.resource)) {
-      var resolved = resolveBundlePath(entry.resource.split("#")[0], fromPath);
+      var parts = entry.resource.split("#");
+      var resolved = resolveBundlePath(parts[0], fromPath);
       if (resolved !== null) {
         var rel = document.createElement("a");
-        rel.href = "#/" + resolved;
+        rel.href = "#/" + encodeRoutePath(resolved) + (parts[1] ? "#" + parts[1] : "");
         rel.textContent = label;
         li.appendChild(rel);
         linked = true;
@@ -240,7 +286,7 @@
 
   function markBrokenLinks(fromPath) {
     content.querySelectorAll("a[href^='#/']").forEach(function (a) {
-      var target = a.getAttribute("href").slice(2).split("#")[0];
+      var target = decodeSafe(a.getAttribute("href").slice(2).split("#")[0]);
       if (brokenCache[target] === false) {
         flagBroken(a, "target unavailable");
         return;
@@ -248,7 +294,7 @@
       if (brokenCache[target] === true) {
         return;
       }
-      fetch("/" + encodeURI(target), { method: "HEAD", cache: "no-store" })
+      fetch("/" + encodeRoutePath(target), { method: "HEAD", cache: "no-store" })
         .then(function (res) {
           brokenCache[target] = res.ok;
           if (!res.ok) {
@@ -327,7 +373,7 @@
       showStatus("Outside the bundle", "#/" + route.path + " escapes the bundle root.");
       return;
     }
-    fetch("/" + encodeURI(route.path), { cache: "no-store" })
+    fetch("/" + encodeRoutePath(route.path), { cache: "no-store" })
       .then(function (res) {
         if (!res.ok) {
           showStatus(
@@ -354,6 +400,7 @@
         var doc = splitFrontmatter(text);
         var bodyHolder = document.createElement("div");
         bodyHolder.innerHTML = window.marked.parse(doc.body, { async: false });
+        sanitize(bodyHolder);
         if (doc.frontmatter) {
           var fm = renderFrontmatter(doc.frontmatter, route.path);
           content.appendChild(fm.head);
@@ -362,7 +409,7 @@
         } else {
           content.appendChild(bodyHolder);
         }
-        slugIds(content);
+        slugIds(bodyHolder);
         content.querySelectorAll("a[href]").forEach(function (a) {
           rewriteTarget(a, "href", route.path);
         });
@@ -390,7 +437,7 @@
   function navLink(text, path) {
     var li = document.createElement("li");
     var a = document.createElement("a");
-    a.href = "#/" + path;
+    a.href = "#/" + encodeRoutePath(path);
     a.textContent = text;
     li.appendChild(a);
     return li;
@@ -422,6 +469,7 @@
     var doc = splitFrontmatter(text);
     var holder = document.createElement("div");
     holder.innerHTML = window.marked.parse(doc.body, { async: false });
+    sanitize(holder);
     holder.querySelectorAll("a[href]").forEach(function (a) {
       rewriteTarget(a, "href", "index.md");
       if (/(^|\/)log\.md($|#)/i.test(decodeSafe(a.getAttribute("href") || ""))) {
@@ -434,7 +482,8 @@
   function buildNav() {
     fetch("/concepts.json", { cache: "no-store" })
       .then(function (res) {
-        return res.ok ? res.json() : null;
+        // A malformed catalog must not hide navigation: fall back to index.md.
+        return res.ok ? res.json().catch(function () { return null; }) : null;
       })
       .then(function (json) {
         if (json && navFromConcepts(json)) {

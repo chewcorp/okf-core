@@ -47,13 +47,14 @@ sources:
   - id: spec
     resource: https://example.com/spec
     title: External spec
-  - resource: shared/ledger.md
+  - resource: shared/ledger.md#shared-ledger
 ---
 
 # Alpha Root Note
 
 Body of the root note. See [sibling](./sibling.md), the
-[root-relative note](/deep/down/note.md), and
+[root-relative note](/deep/down/note.md), the
+[odd file](./odd%23name.md), and
 [a missing note](./not-here.md).
 """
 
@@ -150,6 +151,32 @@ _CONCEPTS_JSON = """\
 }
 """
 
+_ODD = """\
+# Odd Name
+
+A file whose name contains a `#`.
+"""
+
+_BAD_FM = """\
+---
+title: [unclosed
+---
+
+# Bad Frontmatter
+
+This frontmatter cannot be parsed.
+"""
+
+_HOSTILE = """\
+# Hostile Note
+
+<script>window.__xss = 1</script>
+
+<img src="x" onerror="window.__err = 1">
+
+![remote](https://example.com/track.png)
+"""
+
 _BETA_INDEX = """\
 # Beta Bundle
 
@@ -185,6 +212,9 @@ def project(tmp_path: Path) -> Path:
     _write(bundle / "deep" / "index.md", _DEEP_INDEX)
     _write(bundle / "deep" / "down" / "note.md", _DEEP)
     _write(bundle / "deep" / "up-note.md", _UP_NOTE)
+    _write(bundle / "odd#name.md", _ODD)
+    _write(bundle / "bad-fm.md", _BAD_FM)
+    _write(bundle / "hostile.md", _HOSTILE)
     _write(bundle / "shared" / "ledger.md", _LEDGER)
     _write(bundle / "secret" / "hidden.md", "# hidden\n")
     _write(bundle / "fleeting" / "draft.md", "# draft\n")
@@ -273,7 +303,7 @@ def test_frontmatter_shown_without_raw_yaml(browser: Browser, project: Path) -> 
         assert "External spec" in sources
         assert "ledger.md" in sources
         ledger_href = page.get_attribute("#fm-sources a[href*='ledger']", "href")
-        assert ledger_href and ledger_href.endswith("#/shared/ledger.md")
+        assert ledger_href and ledger_href.endswith("#/shared/ledger.md#shared-ledger")
         assert "```" not in page.inner_text("article")
         assert "---" not in page.inner_text("#fm-head")
         assert "---" not in page.inner_text("article")
@@ -401,4 +431,56 @@ def test_second_bundle_reuses_same_adapter(browser: Browser, project: Path) -> N
         page.wait_for_selector("article:has-text('Beta summary')", timeout=10_000)
         assert page.url.endswith("#/beta-note.md")
         assert "Beta Note" in page.inner_text("#nav")
+        page.close()
+
+
+def test_encoded_filename_link_navigates(browser: Browser, project: Path) -> None:
+    with _running_server(project) as address:
+        page = _page(browser, address, "#/root-note.md")
+        page.click("text=odd file")
+        page.wait_for_selector("article:has-text('Odd Name')", timeout=10_000)
+        assert page.url.endswith("#/odd%23name.md")
+        page.close()
+
+
+def test_malformed_concepts_json_falls_back_to_index_nav(
+    browser: Browser, project: Path
+) -> None:
+    (project / "alpha" / "concepts.json").write_text("{ not json")
+    with _running_server(project) as address:
+        page = _page(browser, address)
+        assert page.locator("#nav a[href$='root-note.md']").count() == 1
+        page.close()
+
+
+def test_fragment_prefers_body_heading_over_frontmatter_title(
+    browser: Browser, project: Path
+) -> None:
+    with _running_server(project) as address:
+        page = _page(browser, address, "#/root-note.md")
+        fm_id = page.get_attribute("#fm-head h1", "id")
+        assert not fm_id
+        body_h1 = page.locator("article h1").last
+        assert body_h1.get_attribute("id") == "alpha-root-note"
+        page.close()
+
+
+def test_invalid_frontmatter_stays_visible(browser: Browser, project: Path) -> None:
+    with _running_server(project) as address:
+        page = _page(browser, address, "#/bad-fm.md")
+        article = page.inner_text("article")
+        assert "unclosed" in article
+        assert "Bad Frontmatter" in article
+        page.close()
+
+
+def test_rendered_html_is_sanitized(browser: Browser, project: Path) -> None:
+    with _running_server(project) as address:
+        page = _page(browser, address, "#/hostile.md")
+        assert page.evaluate("() => window.__xss === undefined")
+        assert page.evaluate("() => window.__err === undefined")
+        assert page.locator("article script").count() == 0
+        remote_img = page.locator("article img.okf-broken")
+        assert remote_img.count() == 1
+        assert remote_img.get_attribute("src") is None
         page.close()
