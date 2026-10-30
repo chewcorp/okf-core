@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import http.client
+import json
 import os
 import signal
 import socket
@@ -104,11 +105,14 @@ def _running_server(project: Path, bundle_name: str = "default") -> Iterator[str
 
 
 def _request(
-    address: str, path: str, method: str = "GET"
+    address: str,
+    path: str,
+    method: str = "GET",
+    headers: dict[str, str] | None = None,
 ) -> tuple[int, dict[str, str], bytes]:
     host, _, port = address.rpartition(":")
     conn = http.client.HTTPConnection(host, int(port), timeout=10)
-    conn.request(method, path)
+    conn.request(method, path, headers=headers or {})
     resp = conn.getresponse()
     body = resp.read()
     conn.close()
@@ -310,6 +314,136 @@ def test_no_directory_listing(project: Path) -> None:
         status, _, body = _request(address, "/secret/")
     assert status == 404
     assert b"hidden.md" not in body
+
+
+def test_root_serves_raw_index_even_for_browser_accept(project: Path) -> None:
+    """`/` always serves bundle content; the adapter only lives at /.okf/."""
+    with _running_server(project) as address:
+        status, _, body = _request(
+            address, "/", headers={"Accept": "text/html,application/xhtml+xml"}
+        )
+    assert status == 200
+    assert body == b"# root index\n"
+
+
+def test_root_serves_raw_index_for_non_browser_accept(project: Path) -> None:
+    with _running_server(project) as address:
+        status, _, body = _request(address, "/", headers={"Accept": "*/*"})
+        status_none, _, body_none = _request(address, "/")
+    assert status == 200
+    assert body == b"# root index\n"
+    assert status_none == 200
+    assert body_none == b"# root index\n"
+
+
+@pytest.mark.parametrize(
+    ("path", "type_prefix"),
+    [
+        ("/.okf/", "text/html"),
+        ("/.okf/index.html", "text/html"),
+        ("/.okf/adapter.js", "text/javascript"),
+        ("/.okf/okf.css", "text/css"),
+        ("/.okf/vendor/markdown-it.min.js", "text/javascript"),
+        ("/.okf/vendor/markdown-it-anchor.min.js", "text/javascript"),
+        ("/.okf/vendor/js-yaml.min.js", "text/javascript"),
+        ("/.okf/vendor/mermaid.min.js", "text/javascript"),
+        ("/.okf/files.json", "application/json"),
+    ],
+)
+def test_adapter_assets_served(project: Path, path: str, type_prefix: str) -> None:
+    with _running_server(project) as address:
+        status, headers, body = _request(address, path)
+    assert status == 200
+    assert headers["Content-Type"].startswith(type_prefix)
+    assert body
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/.okf/../page.md",  # traversal through the adapter prefix
+        "/.okf/%2e%2e/page.md",  # encoded traversal
+        "/.okf/nope.js",  # unknown asset name
+        "/.okf",  # bare prefix without slash
+        "/.okf/fleeting/x.js",  # denied segment inside prefix
+        "/.okf/vendor/../adapter.js",  # segment traversal inside prefix
+    ],
+)
+def test_adapter_prefix_denies_non_asset_paths(project: Path, path: str) -> None:
+    with _running_server(project) as address:
+        status, _, _ = _request(address, path)
+    assert status == 404
+
+
+def test_adapter_assets_support_head(project: Path) -> None:
+    with _running_server(project) as address:
+        status, headers, body = _request(address, "/.okf/adapter.js", method="HEAD")
+    assert status == 200
+    assert body == b""
+    assert int(headers["Content-Length"]) > 0
+
+
+def test_named_bundle_serves_adapter_assets(project: Path) -> None:
+    """The packaged adapter is shared: a second bundle serves the same files."""
+    with _running_server(project) as default:
+        _, _, default_js = _request(default, "/.okf/adapter.js")
+    with _running_server(project, bundle_name="other") as other:
+        status, _, other_js = _request(other, "/.okf/adapter.js")
+        root_status, _, _ = _request(other, "/.okf/")
+    assert status == 200
+    assert other_js == default_js
+    assert root_status == 200
+
+
+def test_files_json_lists_only_permitted_paths(project: Path) -> None:
+    """The adapter manifest mirrors the serve boundary exactly."""
+    with _running_server(project) as address:
+        status, headers, body = _request(address, "/.okf/files.json")
+    assert status == 200
+    assert headers["Content-Type"].startswith("application/json")
+    files = json.loads(body)
+    assert {"index.md", "page.md", "sub/index.md", "sub/inner.md"} <= set(files)
+    for denied in (
+        "secret/hidden.md",
+        "fleeting/note.md",
+        "deep/fleeting/x.md",
+        ".env.md",
+        ".git/objects/aa.md",
+        "okf-cache/cached.md",
+        "draft-7.md",
+        "temp-9.md",
+        "evil.md",
+        "notes.txt",
+    ):
+        assert denied not in files
+
+
+def test_files_json_lists_symlink_alias(project: Path) -> None:
+    """A permitted symlink alias is listed under its request-visible name."""
+    if not hasattr(os, "symlink"):
+        pytest.skip("symlinks unavailable")
+    os.symlink("sub/inner.md", project / "bundle" / "alias-page.md")
+    with _running_server(project) as address:
+        _, _, body = _request(address, "/.okf/files.json")
+    files = json.loads(body)
+    assert "alias-page.md" in files
+
+
+def test_files_json_omits_unreadable_files(project: Path) -> None:
+    """A permitted file GET/HEAD would 404 on is not advertised."""
+    unreadable = project / "bundle" / "page.md"
+    unreadable.chmod(0o000)
+    try:
+        unreadable.open("rb").close()
+        pytest.skip("chmod does not make files unreadable here (root?)")
+    except OSError:
+        pass
+    with _running_server(project) as address:
+        _, _, body = _request(address, "/.okf/files.json")
+        status, _, _ = _request(address, "/page.md")
+    files = json.loads(body)
+    assert status == 404
+    assert "page.md" not in files
 
 
 def test_named_bundle_serves_its_root(project: Path) -> None:

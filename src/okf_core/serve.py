@@ -14,11 +14,20 @@ against the resolved bundle root:
 
 Directories never produce a listing: a directory URL redirects to a trailing
 slash and then serves that directory's permitted ``index.md``, or 404.
+
+On top of raw file serving the server ships a small client-side adapter (the
+files under ``okf_core/web``) so a browser can render a bundle's Markdown with
+frontmatter, links and diagrams. Adapter assets live under the reserved
+``/.okf/`` prefix, which is safe because dot-segments are already hard-denied
+for bundle content, so no permitted bundle file can ever be shadowed. ``/.okf/``
+serves the adapter page itself and ``/.okf/files.json`` is a live manifest of
+permitted root-relative paths the adapter uses for broken-link checks.
 """
 
 from __future__ import annotations
 
 import fnmatch
+import json
 import mimetypes
 import os
 from dataclasses import dataclass
@@ -31,6 +40,10 @@ from okf_core.config import BundleConfig, OkfConfig
 _FLEETING_SEGMENT = "fleeting"
 
 _MARKDOWN_SUFFIXES = {".md", ".markdown"}
+
+_ADAPTER_PREFIX = "/.okf/"
+
+_WEB_DIR = Path(__file__).parent / "web"
 
 
 class ServeError(Exception):
@@ -132,11 +145,59 @@ def _content_type(path: Path) -> str:
     return guessed or "application/octet-stream"
 
 
+def _permitted_files(ctx: _ServeContext) -> list[str]:
+    """Root-relative request paths the server would serve.
+
+    Entries are the on-disk (unresolved) paths a request would use, so a
+    permitted symlink alias lists under its own name. Permission is
+    checked on the resolved target exactly like ``_serve`` does, and a
+    file that cannot be opened is omitted because GET/HEAD return 404.
+    """
+    out = []
+    for path in sorted(ctx.root.rglob("*")):
+        if not path.is_file():
+            continue
+        rel_req = PurePosixPath(path.relative_to(ctx.root).as_posix())
+        if _is_denied(rel_req):
+            continue
+        try:
+            resolved = path.resolve(strict=False)
+        except OSError:
+            continue
+        rel = _served_rel(resolved, ctx)
+        if rel is None or not _is_permitted(rel, ctx):
+            continue
+        try:
+            with resolved.open("rb"):
+                pass
+        except OSError:
+            continue
+        out.append(rel_req.as_posix())
+    return out
+
+
+def _adapter_assets() -> dict[str, tuple[bytes, str]]:
+    """Map ``/.okf/<path>`` URLs to packaged adapter asset bytes and types.
+
+    Exact-key matching means traversal, encoded segments and unknown names
+    simply miss the map and fall through to the normal (denied) bundle path
+    resolution.
+    """
+    assets: dict[str, tuple[bytes, str]] = {}
+    for file in sorted(_WEB_DIR.rglob("*")):
+        if file.is_file():
+            rel = file.relative_to(_WEB_DIR).as_posix()
+            assets[_ADAPTER_PREFIX + rel] = (file.read_bytes(), _content_type(file))
+    assets[_ADAPTER_PREFIX] = assets[_ADAPTER_PREFIX + "index.html"]
+    return assets
+
+
 class _BundleHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(self, server_address: tuple[str, int], ctx: _ServeContext):
         self.ctx = ctx
+        self.assets = _adapter_assets()
         super().__init__(server_address, _BundleRequestHandler)
 
 
@@ -179,8 +240,31 @@ class _BundleRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
+    def _send_asset(self, asset: tuple[bytes, str], *, write_body: bool) -> None:
+        data, content_type = asset
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        if write_body:
+            self.wfile.write(data)
+
     def _serve(self, *, write_body: bool) -> None:
         ctx = self.server.ctx
+        decoded_path = unquote(urlsplit(self.path).path)
+        if decoded_path == _ADAPTER_PREFIX + "files.json":
+            self._send_asset(
+                (
+                    json.dumps(_permitted_files(ctx)).encode("utf-8"),
+                    "application/json",
+                ),
+                write_body=write_body,
+            )
+            return
+        asset = self.server.assets.get(decoded_path)
+        if asset is not None:
+            self._send_asset(asset, write_body=write_body)
+            return
         resolved = _resolve_request(self.path, ctx)
         if resolved is None:
             self.send_error(404)

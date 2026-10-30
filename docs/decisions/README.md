@@ -40,6 +40,7 @@ An ADR has these sections:
 | [0002](0002-canonical-serialization-form.md) | Canonical serialization form | ACCEPTED (framework + YAML + Markdown) |
 | [0003](0003-attribution-footnote-label-charset.md) | Attribution footnote label charset | ACCEPTED |
 | [0004](0004-cache-schema-versioning.md) | Cache schema versioning | ACCEPTED |
+| [0005](0005-local-browser-renderer.md) | Local browser renderer is a thin client-side adapter | ACCEPTED |
 
 ## Registered spike-era decisions
 
