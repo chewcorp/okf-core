@@ -272,9 +272,7 @@ def test_frontmatter_shown_without_raw_yaml(browser: Browser, project: Path) -> 
         sources = page.inner_text("#fm-sources")
         assert "External spec" in sources
         assert "ledger.md" in sources
-        ledger_href = page.get_attribute(
-            "#fm-sources a[href*='ledger']", "href"
-        )
+        ledger_href = page.get_attribute("#fm-sources a[href*='ledger']", "href")
         assert ledger_href and ledger_href.endswith("#/shared/ledger.md")
         assert "```" not in page.inner_text("article")
         assert "---" not in page.inner_text("#fm-head")
