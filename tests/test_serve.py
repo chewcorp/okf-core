@@ -418,6 +418,34 @@ def test_files_json_lists_only_permitted_paths(project: Path) -> None:
         assert denied not in files
 
 
+def test_files_json_lists_symlink_alias(project: Path) -> None:
+    """A permitted symlink alias is listed under its request-visible name."""
+    if not hasattr(os, "symlink"):
+        pytest.skip("symlinks unavailable")
+    os.symlink("sub/inner.md", project / "bundle" / "alias-page.md")
+    with _running_server(project) as address:
+        _, _, body = _request(address, "/.okf/files.json")
+    files = json.loads(body)
+    assert "alias-page.md" in files
+
+
+def test_files_json_omits_unreadable_files(project: Path) -> None:
+    """A permitted file GET/HEAD would 404 on is not advertised."""
+    unreadable = project / "bundle" / "page.md"
+    unreadable.chmod(0o000)
+    try:
+        unreadable.open("rb").close()
+        pytest.skip("chmod does not make files unreadable here (root?)")
+    except OSError:
+        pass
+    with _running_server(project) as address:
+        _, _, body = _request(address, "/.okf/files.json")
+        status, _, _ = _request(address, "/page.md")
+    files = json.loads(body)
+    assert status == 404
+    assert "page.md" not in files
+
+
 def test_named_bundle_serves_its_root(project: Path) -> None:
     with _running_server(project, bundle_name="other") as address:
         status, _, body = _request(address, "/")

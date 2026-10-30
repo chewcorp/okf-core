@@ -146,18 +146,33 @@ def _content_type(path: Path) -> str:
 
 
 def _permitted_files(ctx: _ServeContext) -> list[str]:
-    """Root-relative paths the server would serve (adapter link checking)."""
+    """Root-relative request paths the server would serve.
+
+    Entries are the on-disk (unresolved) paths a request would use, so a
+    permitted symlink alias lists under its own name. Permission is
+    checked on the resolved target exactly like ``_serve`` does, and a
+    file that cannot be opened is omitted because GET/HEAD return 404.
+    """
     out = []
     for path in sorted(ctx.root.rglob("*")):
         if not path.is_file():
+            continue
+        rel_req = PurePosixPath(path.relative_to(ctx.root).as_posix())
+        if _is_denied(rel_req):
             continue
         try:
             resolved = path.resolve(strict=False)
         except OSError:
             continue
         rel = _served_rel(resolved, ctx)
-        if rel is not None and _is_permitted(rel, ctx):
-            out.append(rel.as_posix())
+        if rel is None or not _is_permitted(rel, ctx):
+            continue
+        try:
+            with resolved.open("rb"):
+                pass
+        except OSError:
+            continue
+        out.append(rel_req.as_posix())
     return out
 
 
