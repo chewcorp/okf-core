@@ -104,11 +104,14 @@ def _running_server(project: Path, bundle_name: str = "default") -> Iterator[str
 
 
 def _request(
-    address: str, path: str, method: str = "GET"
+    address: str,
+    path: str,
+    method: str = "GET",
+    headers: dict[str, str] | None = None,
 ) -> tuple[int, dict[str, str], bytes]:
     host, _, port = address.rpartition(":")
     conn = http.client.HTTPConnection(host, int(port), timeout=10)
-    conn.request(method, path)
+    conn.request(method, path, headers=headers or {})
     resp = conn.getresponse()
     body = resp.read()
     conn.close()
@@ -310,6 +313,83 @@ def test_no_directory_listing(project: Path) -> None:
         status, _, body = _request(address, "/secret/")
     assert status == 404
     assert b"hidden.md" not in body
+
+
+def test_root_serves_adapter_for_browser_accept(project: Path) -> None:
+    with _running_server(project) as address:
+        status, headers, body = _request(
+            address, "/", headers={"Accept": "text/html,application/xhtml+xml"}
+        )
+    assert status == 200
+    assert headers["Content-Type"].startswith("text/html")
+    assert b"/.okf/adapter.js" in body
+
+
+def test_root_serves_raw_index_for_non_browser_accept(project: Path) -> None:
+    with _running_server(project) as address:
+        status, _, body = _request(address, "/", headers={"Accept": "*/*"})
+        status_none, _, body_none = _request(address, "/")
+    assert status == 200
+    assert body == b"# root index\n"
+    assert status_none == 200
+    assert body_none == b"# root index\n"
+
+
+@pytest.mark.parametrize(
+    ("path", "type_prefix"),
+    [
+        ("/.okf/", "text/html"),
+        ("/.okf/index.html", "text/html"),
+        ("/.okf/adapter.js", "text/javascript"),
+        ("/.okf/okf.css", "text/css"),
+        ("/.okf/vendor/marked.min.js", "text/javascript"),
+        ("/.okf/vendor/js-yaml.min.js", "text/javascript"),
+        ("/.okf/vendor/mermaid.min.js", "text/javascript"),
+    ],
+)
+def test_adapter_assets_served(project: Path, path: str, type_prefix: str) -> None:
+    with _running_server(project) as address:
+        status, headers, body = _request(address, path)
+    assert status == 200
+    assert headers["Content-Type"].startswith(type_prefix)
+    assert body
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/.okf/../page.md",  # traversal through the adapter prefix
+        "/.okf/%2e%2e/page.md",  # encoded traversal
+        "/.okf/nope.js",  # unknown asset name
+        "/.okf",  # bare prefix without slash
+        "/.okf/fleeting/x.js",  # denied segment inside prefix
+        "/.okf/vendor/../adapter.js",  # segment traversal inside prefix
+    ],
+)
+def test_adapter_prefix_denies_non_asset_paths(project: Path, path: str) -> None:
+    with _running_server(project) as address:
+        status, _, _ = _request(address, path)
+    assert status == 404
+
+
+def test_adapter_assets_support_head(project: Path) -> None:
+    with _running_server(project) as address:
+        status, headers, body = _request(address, "/.okf/adapter.js", method="HEAD")
+    assert status == 200
+    assert body == b""
+    assert int(headers["Content-Length"]) > 0
+
+
+def test_named_bundle_serves_adapter_assets(project: Path) -> None:
+    """The packaged adapter is shared: a second bundle serves the same files."""
+    with _running_server(project) as default:
+        _, _, default_js = _request(default, "/.okf/adapter.js")
+    with _running_server(project, bundle_name="other") as other:
+        status, _, other_js = _request(other, "/.okf/adapter.js")
+        root_status, _, _ = _request(other, "/", headers={"Accept": "text/html"})
+    assert status == 200
+    assert other_js == default_js
+    assert root_status == 200
 
 
 def test_named_bundle_serves_its_root(project: Path) -> None:

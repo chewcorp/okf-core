@@ -14,6 +14,14 @@ against the resolved bundle root:
 
 Directories never produce a listing: a directory URL redirects to a trailing
 slash and then serves that directory's permitted ``index.md``, or 404.
+
+On top of raw file serving the server ships a small client-side adapter (the
+files under ``okf_core/web``) so a browser can render a bundle's Markdown with
+frontmatter, links and diagrams. ``/`` answers a request carrying
+``Accept: text/html`` with the adapter page and raw ``index.md`` to anything
+else; adapter assets live under the reserved ``/.okf/`` prefix, which is safe
+because dot-segments are already hard-denied for bundle content, so no
+permitted bundle file can ever be shadowed.
 """
 
 from __future__ import annotations
@@ -31,6 +39,10 @@ from okf_core.config import BundleConfig, OkfConfig
 _FLEETING_SEGMENT = "fleeting"
 
 _MARKDOWN_SUFFIXES = {".md", ".markdown"}
+
+_ADAPTER_PREFIX = "/.okf/"
+
+_WEB_DIR = Path(__file__).parent / "web"
 
 
 class ServeError(Exception):
@@ -132,11 +144,28 @@ def _content_type(path: Path) -> str:
     return guessed or "application/octet-stream"
 
 
+def _adapter_assets() -> dict[str, tuple[bytes, str]]:
+    """Map ``/.okf/<path>`` URLs to packaged adapter asset bytes and types.
+
+    Exact-key matching means traversal, encoded segments and unknown names
+    simply miss the map and fall through to the normal (denied) bundle path
+    resolution.
+    """
+    assets: dict[str, tuple[bytes, str]] = {}
+    for file in sorted(_WEB_DIR.rglob("*")):
+        if file.is_file():
+            rel = file.relative_to(_WEB_DIR).as_posix()
+            assets[_ADAPTER_PREFIX + rel] = (file.read_bytes(), _content_type(file))
+    assets[_ADAPTER_PREFIX] = assets[_ADAPTER_PREFIX + "index.html"]
+    return assets
+
+
 class _BundleHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(self, server_address: tuple[str, int], ctx: _ServeContext):
         self.ctx = ctx
+        self.assets = _adapter_assets()
         super().__init__(server_address, _BundleRequestHandler)
 
 
@@ -179,8 +208,28 @@ class _BundleRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
+    def _send_asset(self, asset: tuple[bytes, str], *, write_body: bool) -> None:
+        data, content_type = asset
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        if write_body:
+            self.wfile.write(data)
+
     def _serve(self, *, write_body: bool) -> None:
         ctx = self.server.ctx
+        decoded_path = unquote(urlsplit(self.path).path)
+        asset = self.server.assets.get(decoded_path)
+        if asset is not None:
+            self._send_asset(asset, write_body=write_body)
+            return
+        if decoded_path == "/" and "text/html" in self.headers.get("Accept", ""):
+            self._send_asset(
+                self.server.assets[_ADAPTER_PREFIX + "index.html"],
+                write_body=write_body,
+            )
+            return
         resolved = _resolve_request(self.path, ctx)
         if resolved is None:
             self.send_error(404)
