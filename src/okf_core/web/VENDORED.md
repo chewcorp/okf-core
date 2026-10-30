@@ -7,7 +7,8 @@ license.
 
 | File | Upstream | Version | License | Source |
 | --- | --- | --- | --- | --- |
-| `marked.min.js` | marked | 12.0.2 | MIT | https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js |
+| `markdown-it.min.js` | markdown-it | 14.1.0 | MIT | https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/dist/markdown-it.min.js |
+| `markdown-it-anchor.min.js` | markdown-it-anchor | 9.2.0 | Unlicense | https://cdn.jsdelivr.net/npm/markdown-it-anchor@9.2.0/dist/markdownItAnchor.umd.js |
 | `js-yaml.min.js` | js-yaml | 4.1.0 | MIT | https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js |
 | `mermaid.min.js` | mermaid | 11.12.0 | MIT | https://cdn.jsdelivr.net/npm/mermaid@11.12.0/dist/mermaid.min.js |
 

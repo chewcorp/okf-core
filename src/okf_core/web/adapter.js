@@ -5,7 +5,12 @@
  * bundle-root path, so every document fetch is subject to the server-side
  * include/exclude/fleeting/dot-segment denies.
  *
- * Renderer choice: marked + js-yaml + mermaid, vendored under `vendor/`.
+ * Renderer choice: markdown-it (+ markdown-it-anchor) + js-yaml + mermaid,
+ * vendored under `vendor/`. markdown-it renders with its default `html:
+ * false`, so raw HTML in a note shows as text and its link validator already
+ * drops javascript:/vbscript: URLs — no post-render sanitization pass is
+ * needed. Rendered markup is composed inside a <template>, which is inert,
+ * so image/link rewriting happens before any node can trigger a fetch.
  * Docsify was evaluated for the same role and rejected: its directory landing
  * convention (README.md, not index.md), `?id=` fragment rewriting, _sidebar.md
  * navigation convention, and absence of frontmatter handling would each have
@@ -17,8 +22,20 @@
   var content = document.getElementById("content");
   var statusBox = document.getElementById("status");
   var nav = document.getElementById("nav");
-  var brokenCache = {};
   var mermaidPromise = null;
+  var filesPromise = null;
+
+  var md = window.markdownit();
+  md.use(window.markdownItAnchor, {
+    // GitHub-style unicode slugs so fragment links survive non-ASCII headings.
+    slugify: function (s) {
+      return s
+        .trim()
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}\s_-]/gu, "")
+        .replace(/\s+/g, "-");
+    },
+  });
 
   // ---------- routing ----------
 
@@ -98,7 +115,9 @@
     return path.split("/").map(encodeURIComponent).join("/");
   }
 
-  /* Rewrite a link/image target into an adapter route or raw bundle URL. */
+  /* Rewrite a link/image target into an adapter route or raw bundle URL.
+   * Runs on inert <template> content, so stripping `src` here means no
+   * request ever leaves the browser. */
   function rewriteTarget(el, attr, fromPath) {
     var raw = el.getAttribute(attr);
     if (!raw) {
@@ -106,7 +125,6 @@
     }
     if (/^(https?:|mailto:|tel:|data:)/i.test(raw)) {
       if (attr === "src" && /^https?:/i.test(raw)) {
-        // Remote images would send the reader's request to a third party.
         el.removeAttribute("src");
         el.classList.add("okf-broken");
         el.title = "remote image not fetched (external request blocked)";
@@ -146,10 +164,27 @@
     }
   }
 
+  /* Render `text` into a fresh inert <template> and rewrite every link and
+   * image target before it reaches the live DOM. */
+  function renderToFragment(text, fromPath) {
+    var tpl = document.createElement("template");
+    tpl.innerHTML = md.render(text);
+    tpl.content.querySelectorAll("a[href]").forEach(function (a) {
+      rewriteTarget(a, "href", fromPath);
+    });
+    tpl.content.querySelectorAll("img").forEach(function (img) {
+      rewriteTarget(img, "src", fromPath);
+    });
+    return tpl.content;
+  }
+
   // ---------- document rendering ----------
 
   function splitFrontmatter(text) {
-    var match = text.match(/^---\r?\n([\s\S]*?)\r?\n?---\r?\n?/);
+    // The closing fence must be a line containing only `---`, matching
+    // documents.py _find_frontmatter_close, so `a --- b` in a value
+    // cannot end the block early.
+    var match = text.match(/^---\r?\n([\s\S]*?)\r?\n---[ \t]*(\r?\n|$)/);
     if (!match) {
       return { frontmatter: null, body: text };
     }
@@ -168,34 +203,6 @@
       frontmatter: data,
       body: text.slice(match[0].length),
     };
-  }
-
-  /* Strip active content from rendered bundle HTML: scripts, embeds,
-   * forms, navigation-ish elements, on* handlers, javascript:/vbscript:
-   * URLs and SVG animation elements (which can retarget a link after
-   * sanitization). Bundle Markdown must never execute code in the page. */
-  function sanitize(root) {
-    root
-      .querySelectorAll(
-        "script, iframe, object, embed, form, link, meta, base, " +
-          "animate, animatemotion, animatetransform, set"
-      )
-      .forEach(function (el) {
-        el.remove();
-      });
-    root.querySelectorAll("*").forEach(function (el) {
-      Array.prototype.slice.call(el.attributes).forEach(function (attr) {
-        var name = attr.name.toLowerCase();
-        var value = String(attr.value).replace(/\s/g, "").toLowerCase();
-        if (
-          name.startsWith("on") ||
-          ((name === "href" || name === "src" || name === "action" || name === "formaction") &&
-            (value.startsWith("javascript:") || value.startsWith("vbscript:")))
-        ) {
-          el.removeAttribute(attr.name);
-        }
-      });
-    });
   }
 
   function sourceEntryHtml(entry, fromPath) {
@@ -270,44 +277,38 @@
     return { head: head, sources: sources };
   }
 
-  function slugIds(root) {
-    var seen = {};
-    root.querySelectorAll("h1, h2, h3, h4, h5, h6").forEach(function (h) {
-      if (h.id) {
-        return;
-      }
-      var slug = h.textContent
-        .toLowerCase()
-        .replace(/[^\w\s-]/g, "")
-        .trim()
-        .replace(/\s+/g, "-");
-      var base = slug || "section";
-      var n = seen[base] || 0;
-      seen[base] = n + 1;
-      h.id = n ? base + "-" + n : base;
-    });
-  }
-
-  function markBrokenLinks(fromPath) {
-    content.querySelectorAll("a[href^='#/']").forEach(function (a) {
-      var target = decodeSafe(a.getAttribute("href").slice(2).split("#")[0]);
-      if (brokenCache[target] === false) {
-        flagBroken(a, "target unavailable");
-        return;
-      }
-      if (brokenCache[target] === true) {
-        return;
-      }
-      fetch("/" + encodeRoutePath(target), { method: "HEAD", cache: "no-store" })
+  /* The server computes the permitted-path manifest once per request; the
+   * adapter uses it to mark bundle links whose targets are missing or
+   * denied, instead of issuing a HEAD request per link. */
+  function permittedFiles() {
+    if (!filesPromise) {
+      filesPromise = fetch("/.okf/files.json", { cache: "no-store" })
         .then(function (res) {
-          brokenCache[target] = res.ok;
-          if (!res.ok) {
-            flagBroken(a, "target unavailable (HTTP " + res.status + ")");
-          }
+          return res.ok ? res.json() : null;
+        })
+        .then(function (list) {
+          return Array.isArray(list) ? new Set(list) : null;
         })
         .catch(function () {
-          flagBroken(a, "target check failed");
+          return null;
         });
+    }
+    return filesPromise;
+  }
+
+  function markBrokenLinks() {
+    permittedFiles().then(function (files) {
+      if (!files) {
+        console.error("permitted-files manifest unavailable; links unchecked");
+        return;
+      }
+      content.querySelectorAll("a[href^='#/']").forEach(function (a) {
+        var target = decodeSafe(a.getAttribute("href").slice(2).split("#")[0]);
+        var dirIndex = target ? target.replace(/\/+$/, "") + "/index.md" : "index.md";
+        if (!files.has(target) && !files.has(dirIndex)) {
+          flagBroken(a, "target unavailable");
+        }
+      });
     });
   }
 
@@ -402,25 +403,16 @@
           return;
         }
         var doc = splitFrontmatter(text);
-        var bodyHolder = document.createElement("div");
-        bodyHolder.innerHTML = window.marked.parse(doc.body, { async: false });
-        sanitize(bodyHolder);
+        var body = renderToFragment(doc.body, route.path);
         if (doc.frontmatter) {
           var fm = renderFrontmatter(doc.frontmatter, route.path);
           content.appendChild(fm.head);
-          content.appendChild(bodyHolder);
+          content.appendChild(body);
           content.appendChild(fm.sources);
         } else {
-          content.appendChild(bodyHolder);
+          content.appendChild(body);
         }
-        slugIds(bodyHolder);
-        content.querySelectorAll("a[href]").forEach(function (a) {
-          rewriteTarget(a, "href", route.path);
-        });
-        content.querySelectorAll("img[src]").forEach(function (img) {
-          rewriteTarget(img, "src", route.path);
-        });
-        markBrokenLinks(route.path);
+        markBrokenLinks();
         renderMermaid();
         if (route.fragment) {
           var target = document.getElementById(route.fragment);
@@ -438,63 +430,6 @@
 
   // ---------- navigation ----------
 
-  function navLink(text, path) {
-    var li = document.createElement("li");
-    var a = document.createElement("a");
-    a.href = "#/" + encodeRoutePath(path);
-    a.textContent = text;
-    li.appendChild(a);
-    return li;
-  }
-
-  function navFromConcepts(json) {
-    var list = Array.isArray(json) ? json : json.concepts;
-    if (!Array.isArray(list)) {
-      return false;
-    }
-    var ul = document.createElement("ul");
-    var count = 0;
-    list.forEach(function (concept) {
-      var path = concept && (concept.path || concept.concept_id);
-      if (!path || /(^|\/)log\.md$/i.test(path)) {
-        return;
-      }
-      ul.appendChild(navLink(concept.title || concept.concept_id || path, path));
-      count += 1;
-    });
-    if (!count) {
-      return false;
-    }
-    nav.appendChild(ul);
-    return true;
-  }
-
-  function navFromIndex(text) {
-    var doc = splitFrontmatter(text);
-    var holder = document.createElement("div");
-    holder.innerHTML = window.marked.parse(doc.body, { async: false });
-    sanitize(holder);
-    holder.querySelectorAll("a[href]").forEach(function (a) {
-      rewriteTarget(a, "href", "index.md");
-      if (/(^|\/)log\.md($|#)/i.test(decodeSafe(a.getAttribute("href") || ""))) {
-        a.closest("li") ? a.closest("li").remove() : a.remove();
-      }
-    });
-    nav.appendChild(holder);
-  }
-
-  function loadIndexNav() {
-    return fetch("/index.md", { cache: "no-store" })
-      .then(function (res) {
-        return res.ok ? res.text() : "";
-      })
-      .then(function (text) {
-        if (text) {
-          navFromIndex(text);
-        }
-      });
-  }
-
   function navWarning(text) {
     var p = document.createElement("p");
     p.className = "nav-warning";
@@ -502,34 +437,38 @@
     nav.appendChild(p);
   }
 
+  function navFromIndex(text) {
+    var doc = splitFrontmatter(text);
+    var frag = renderToFragment(doc.body, "index.md");
+    frag.querySelectorAll("a[href]").forEach(function (a) {
+      if (/(^|\/)log\.md($|#)/i.test(decodeSafe(a.getAttribute("href") || ""))) {
+        var li = a.closest("li");
+        (li || a).remove();
+      }
+    });
+    var holder = document.createElement("div");
+    holder.appendChild(frag);
+    nav.appendChild(holder);
+  }
+
   function buildNav() {
-    fetch("/concepts.json", { cache: "no-store" })
+    fetch("/index.md", { cache: "no-store" })
       .then(function (res) {
-        if (!res.ok) {
-          // No catalog at all: index.md is the normal alternative driver.
-          return loadIndexNav();
-        }
-        return res.json().then(
-          function (json) {
-            if (json && navFromConcepts(json)) {
-              return;
-            }
-            navWarning("concepts.json has no usable entries; showing index navigation");
-            return loadIndexNav();
-          },
-          function () {
-            navWarning("concepts.json is unreadable; showing index navigation");
-            return loadIndexNav();
-          }
-        );
+        return res.ok ? res.text() : "";
       })
-      .catch(function () {
-        /* nav is optional; the document still renders */
+      .then(function (text) {
+        if (text) {
+          navFromIndex(text);
+        }
+      })
+      .catch(function (err) {
+        console.error("navigation load failed", err);
+        navWarning("navigation unavailable");
       });
   }
 
   document.getElementById("refresh").addEventListener("click", function () {
-    brokenCache = {};
+    filesPromise = null;
     render();
   });
   window.addEventListener("hashchange", render);
