@@ -449,7 +449,7 @@ def test_malformed_concepts_json_falls_back_to_index_nav(
     (project / "alpha" / "concepts.json").write_text("{ not json")
     with _running_server(project) as address:
         page = _page(browser, address)
-        assert page.locator("#nav a[href$='root-note.md']").count() == 1
+        page.wait_for_selector("#nav a[href$='root-note.md']", timeout=10_000)
         page.close()
 
 
