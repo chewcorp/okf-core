@@ -26,7 +26,7 @@ brings contradicts the OKF contract this adapter must honour:
 - its router rewrites `?id=` fragments rather than following OKF §6 link
   targets;
 - navigation comes from `_sidebar.md`/`_navbar.md` conventions, not the
-  bundle's `index.md`/`concepts.json`;
+  bundle's `index.md`;
 - it has no frontmatter rendering of title/description/sources;
 - broken-link handling, `fleeting`/excluded denials, and `log.md`
   viewable-but-not-navigable are all OKF-specific and would each need an
@@ -43,14 +43,20 @@ plugins doing the real work anyway.
    prefix `/.okf/`. Dot-segments are already hard-denied for bundle
    content, so a permitted bundle file can never shadow or be shadowed by
    an adapter asset.
-2. **`/` serves the adapter shell to browsers only.** Requests whose
-   `Accept` header contains `text/html` get `index.html`; everything else
-   (curl, agents, tests) keeps receiving the raw bundle files exactly as
-   CPB-32 served them. No content negotiation happens below `/`.
+2. **The adapter lives only at `/.okf/`** (`/.okf/` itself serves
+   `index.html`). There is no content negotiation anywhere: every other
+   path serves raw bundle files exactly as CPB-32 served them, and the
+   CLI prints the `/.okf/` URL as the browser entry point.
 3. **The adapter is plain JavaScript plus three vendored libraries** —
-   `marked` (Markdown → HTML), `js-yaml` (frontmatter), `mermaid` (fences
-   lazy-loaded on first Mermaid block) — no build step, no framework, no
-   runtime dependency on Python. Vendored copies in
+   `markdown-it` (Markdown → HTML, default `html: false`) with
+   `markdown-it-anchor` (GitHub-style unicode heading slugs), `js-yaml`
+   (frontmatter), and `mermaid` (fences lazy-loaded on first Mermaid
+   block) — no build step, no framework, no runtime dependency on
+   Python. `html: false` means raw HTML in a note renders as inert text
+   and the engine's link validator already drops `javascript:`/`vbscript:`
+   URLs, so no post-render sanitization pass exists. Rendered markup is
+   composed inside a `<template>` (inert DOM), so remote image `src` is
+   stripped before any node can trigger a request. Vendored copies in
    `src/okf_core/web/vendor/` keep `okf serve` fully offline.
 4. **Routing is `#/<bundle-path>` hash routing.** Directory routes land
    on that directory's `index.md`; an empty route lands on the root
@@ -59,15 +65,17 @@ plugins doing the real work anyway.
    fetches identically — nothing client-side can widen the boundary.
 5. **OKF §6 link semantics resolve client-side.** Root-relative
    (`/x.md`), relative (`./x.md`), parent-relative (`../x.md`), and
-   fragment links are rewritten against the source document's directory;
-   links escaping the bundle root or failing a HEAD check are marked
-   `okf-broken` rather than breaking the page.
+   fragment links are rewritten against the source document's directory.
+   Broken links are marked `okf-broken` against `/.okf/files.json`, a
+   live manifest of permitted paths computed by the server — one request
+   per render instead of a HEAD per link.
 6. **Frontmatter renders, raw YAML never does.** `title`, `description`,
    and `sources` get dedicated rendering; unknown fields are ignored for
-   display.
-7. **Navigation comes from the bundle, not adapter configuration.** Root
-   `concepts.json` when present, otherwise the rendered root `index.md`;
-   `log.md` is filtered from nav but remains viewable by route.
+   display. The closing frontmatter fence must be a whole `---` line,
+   matching `documents.py`.
+7. **Navigation comes from the rendered root `index.md`.** Nothing in
+   okf-core produces a `concepts.json` nav catalog, so no schema is
+   guessed; `log.md` is filtered from nav but remains viewable by route.
 8. **The regression oracle is Playwright** (`tests/test_browser_render.py`,
    optional `browser` extra) driving a real browser over two synthetic
    bundles, covering navigation, link/fragment resolution, frontmatter,
@@ -79,6 +87,13 @@ plugins doing the real work anyway.
   landing-page, router, and nav conventions each contradict the OKF
   contract, so it would host the same amount of custom code with less
   control.
+- **Quartz** — rejected. Its graph view would have been nice, but it is
+  not worth Node, a second server, and rebuilding the `okf serve`
+  boundary to get it.
+- **marked as the vendored renderer** — rejected on review. markdown-it
+  escapes raw HTML by default and validates link protocols, which
+  removes the sanitization denylist and the fetch-ordering workaround a
+  raw-HTML pipeline needed.
 - **Server-side rendering to HTML** — rejected. It would need generated
   HTML (committed or cached), a template layer in Python, and a second
   content type through the serving boundary; the ticket wants raw
@@ -96,5 +111,5 @@ plugins doing the real work anyway.
 Reopen this decision if OKF browsing needs richer interaction than the
 adapter can carry without growing a framework (live search, graph view,
 editing), if the vendored libraries become a maintenance burden, or if
-the serving boundary itself changes shape such that `Accept` negotiation
-at `/` is no longer sufficient.
+something real starts producing a `concepts.json`-style nav catalog the
+adapter should consume.
