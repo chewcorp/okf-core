@@ -2034,9 +2034,10 @@ def serve_cmd(
     configured cache directory, and the config file itself are never served,
     and paths outside the resolved bundle root are denied. Directories serve
     their permitted ``index.md``; there is no directory listing and no
-    endpoint writes. Opening the printed URL in a browser renders the bundle
-    through the packaged client-side adapter; non-browser requests keep
-    receiving raw files. Exits ``1`` if the address cannot be bound.
+    endpoint writes. Opening the printed ``/.okf/`` URL in a browser renders
+    the bundle through the packaged client-side adapter; every other path
+    keeps serving raw permitted files. Exits ``1`` if the address cannot be
+    bound.
     """
     cfg, bundle = _load(config_path, bundle_name)
     try:
@@ -2046,7 +2047,7 @@ def serve_cmd(
         sys.exit(1)
     click.echo(
         f"Serving bundle {bundle.name!r} at http://{host}:{httpd.server_port}/ "
-        "(open in a browser to browse; Ctrl-C to stop)"
+        f"(browse http://{host}:{httpd.server_port}/.okf/ ; Ctrl-C to stop)"
     )
     serve_until_stopped(httpd)
 

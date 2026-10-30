@@ -17,16 +17,17 @@ slash and then serves that directory's permitted ``index.md``, or 404.
 
 On top of raw file serving the server ships a small client-side adapter (the
 files under ``okf_core/web``) so a browser can render a bundle's Markdown with
-frontmatter, links and diagrams. ``/`` answers a request carrying
-``Accept: text/html`` with the adapter page and raw ``index.md`` to anything
-else; adapter assets live under the reserved ``/.okf/`` prefix, which is safe
-because dot-segments are already hard-denied for bundle content, so no
-permitted bundle file can ever be shadowed.
+frontmatter, links and diagrams. Adapter assets live under the reserved
+``/.okf/`` prefix, which is safe because dot-segments are already hard-denied
+for bundle content, so no permitted bundle file can ever be shadowed. ``/.okf/``
+serves the adapter page itself and ``/.okf/files.json`` is a live manifest of
+permitted root-relative paths the adapter uses for broken-link checks.
 """
 
 from __future__ import annotations
 
 import fnmatch
+import json
 import mimetypes
 import os
 from dataclasses import dataclass
@@ -144,6 +145,22 @@ def _content_type(path: Path) -> str:
     return guessed or "application/octet-stream"
 
 
+def _permitted_files(ctx: _ServeContext) -> list[str]:
+    """Root-relative paths the server would serve (adapter link checking)."""
+    out = []
+    for path in sorted(ctx.root.rglob("*")):
+        if not path.is_file():
+            continue
+        try:
+            resolved = path.resolve(strict=False)
+        except OSError:
+            continue
+        rel = _served_rel(resolved, ctx)
+        if rel is not None and _is_permitted(rel, ctx):
+            out.append(rel.as_posix())
+    return out
+
+
 def _adapter_assets() -> dict[str, tuple[bytes, str]]:
     """Map ``/.okf/<path>`` URLs to packaged adapter asset bytes and types.
 
@@ -220,15 +237,18 @@ class _BundleRequestHandler(BaseHTTPRequestHandler):
     def _serve(self, *, write_body: bool) -> None:
         ctx = self.server.ctx
         decoded_path = unquote(urlsplit(self.path).path)
+        if decoded_path == _ADAPTER_PREFIX + "files.json":
+            self._send_asset(
+                (
+                    json.dumps(_permitted_files(ctx)).encode("utf-8"),
+                    "application/json",
+                ),
+                write_body=write_body,
+            )
+            return
         asset = self.server.assets.get(decoded_path)
         if asset is not None:
             self._send_asset(asset, write_body=write_body)
-            return
-        if decoded_path == "/" and "text/html" in self.headers.get("Accept", ""):
-            self._send_asset(
-                self.server.assets[_ADAPTER_PREFIX + "index.html"],
-                write_body=write_body,
-            )
             return
         resolved = _resolve_request(self.path, ctx)
         if resolved is None:
