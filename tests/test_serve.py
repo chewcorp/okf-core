@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import http.client
+import json
 import os
 import signal
 import socket
@@ -315,14 +316,14 @@ def test_no_directory_listing(project: Path) -> None:
     assert b"hidden.md" not in body
 
 
-def test_root_serves_adapter_for_browser_accept(project: Path) -> None:
+def test_root_serves_raw_index_even_for_browser_accept(project: Path) -> None:
+    """`/` always serves bundle content; the adapter only lives at /.okf/."""
     with _running_server(project) as address:
-        status, headers, body = _request(
+        status, _, body = _request(
             address, "/", headers={"Accept": "text/html,application/xhtml+xml"}
         )
     assert status == 200
-    assert headers["Content-Type"].startswith("text/html")
-    assert b"/.okf/adapter.js" in body
+    assert body == b"# root index\n"
 
 
 def test_root_serves_raw_index_for_non_browser_accept(project: Path) -> None:
@@ -342,9 +343,11 @@ def test_root_serves_raw_index_for_non_browser_accept(project: Path) -> None:
         ("/.okf/index.html", "text/html"),
         ("/.okf/adapter.js", "text/javascript"),
         ("/.okf/okf.css", "text/css"),
-        ("/.okf/vendor/marked.min.js", "text/javascript"),
+        ("/.okf/vendor/markdown-it.min.js", "text/javascript"),
+        ("/.okf/vendor/markdown-it-anchor.min.js", "text/javascript"),
         ("/.okf/vendor/js-yaml.min.js", "text/javascript"),
         ("/.okf/vendor/mermaid.min.js", "text/javascript"),
+        ("/.okf/files.json", "application/json"),
     ],
 )
 def test_adapter_assets_served(project: Path, path: str, type_prefix: str) -> None:
@@ -386,10 +389,33 @@ def test_named_bundle_serves_adapter_assets(project: Path) -> None:
         _, _, default_js = _request(default, "/.okf/adapter.js")
     with _running_server(project, bundle_name="other") as other:
         status, _, other_js = _request(other, "/.okf/adapter.js")
-        root_status, _, _ = _request(other, "/", headers={"Accept": "text/html"})
+        root_status, _, _ = _request(other, "/.okf/")
     assert status == 200
     assert other_js == default_js
     assert root_status == 200
+
+
+def test_files_json_lists_only_permitted_paths(project: Path) -> None:
+    """The adapter manifest mirrors the serve boundary exactly."""
+    with _running_server(project) as address:
+        status, headers, body = _request(address, "/.okf/files.json")
+    assert status == 200
+    assert headers["Content-Type"].startswith("application/json")
+    files = json.loads(body)
+    assert {"index.md", "page.md", "sub/index.md", "sub/inner.md"} <= set(files)
+    for denied in (
+        "secret/hidden.md",
+        "fleeting/note.md",
+        "deep/fleeting/x.md",
+        ".env.md",
+        ".git/objects/aa.md",
+        "okf-cache/cached.md",
+        "draft-7.md",
+        "temp-9.md",
+        "evil.md",
+        "notes.txt",
+    ):
+        assert denied not in files
 
 
 def test_named_bundle_serves_its_root(project: Path) -> None:

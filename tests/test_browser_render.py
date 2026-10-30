@@ -4,7 +4,8 @@ Drives a real headless browser against a running server over synthetic
 bundles: navigation, OKF link/fragment resolution, frontmatter display,
 broken links, Mermaid fences, and denied fetches through the permitted-file
 boundary. Requires the ``browser`` extra (``pip install -e ".[test,browser]"``)
-and a Chromium-family binary; skipped when neither is available.
+and a Chromium-family binary; skipped when neither is available, failing
+under CI where the browser is provisioned.
 """
 
 from __future__ import annotations
@@ -143,16 +144,6 @@ _LOG = """\
 - **Update**: entry
 """
 
-_CONCEPTS_JSON = """\
-{
-  "concepts": [
-    {"concept_id": "root-note", "path": "root-note.md", "title": "Alpha Root Note"},
-    {"concept_id": "deep/down/note", "path": "deep/down/note.md", "title": "Deep Note"},
-    {"concept_id": "log", "path": "log.md", "title": "Update Log"}
-  ]
-}
-"""
-
 _ODD = """\
 # Odd Name
 
@@ -197,6 +188,29 @@ description: Beta summary.
 # Beta Note
 """
 
+_FM_DASHES = """\
+---
+type: concept
+title: Dashed
+description: a --- b
+---
+
+# Dashed
+
+Body after dashes.
+"""
+
+_UNICODE = (
+    """\
+# Unicode
+
+See [the unicode section](#café-naïve).
+
+"""
+    + "\n".join(f"Filler paragraph {i} pushes the heading down.\n" for i in range(40))
+    + "\n## Café Naïve\n\nAccents survive.\n"
+)
+
 
 def _write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -209,7 +223,6 @@ def project(tmp_path: Path) -> Path:
     _write(root / "okf-core.toml", _CONFIG)
     bundle = root / "alpha"
     _write(bundle / "index.md", _INDEX)
-    _write(bundle / "concepts.json", _CONCEPTS_JSON)
     _write(bundle / "root-note.md", _NOTE_A)
     _write(bundle / "sibling.md", _SIBLING)
     _write(bundle / "log.md", _LOG)
@@ -219,6 +232,8 @@ def project(tmp_path: Path) -> Path:
     _write(bundle / "odd#name.md", _ODD)
     _write(bundle / "bad-fm.md", _BAD_FM)
     _write(bundle / "hostile.md", _HOSTILE)
+    _write(bundle / "dashes.md", _FM_DASHES)
+    _write(bundle / "unicode.md", _UNICODE)
     _write(bundle / "shared" / "ledger.md", _LEDGER)
     _write(bundle / "secret" / "hidden.md", "# hidden\n")
     _write(bundle / "fleeting" / "draft.md", "# draft\n")
@@ -250,11 +265,6 @@ def _chrome_candidates() -> list[str]:
     if env_path:
         candidates.append(env_path)
     candidates.append("/opt/google/chrome/chrome")
-    devin = Path("/opt/.devin/chrome")
-    if devin.is_dir():
-        candidates.extend(
-            str(p) for p in sorted(devin.glob("chrome/*/chrome-linux64/chrome"))
-        )
     return candidates
 
 
@@ -279,6 +289,8 @@ def browser() -> Iterator[Browser]:
     with playwright_sync.sync_playwright() as p:
         b = next((b for b in (_try_launch(p, **kw) for kw in attempts) if b), None)
         if b is None:
+            if os.environ.get("CI"):
+                pytest.fail("no Chromium-family browser found (CI must provision one)")
             pytest.skip("no Chromium-family browser found")
         yield b
         b.close()
@@ -286,7 +298,7 @@ def browser() -> Iterator[Browser]:
 
 def _page(browser: Browser, address: str, route: str = "") -> Page:
     page = browser.new_page()
-    page.goto(f"http://{address}/{route}")
+    page.goto(f"http://{address}/.okf/{route}")
     page.wait_for_selector("#nav a, #status:not([hidden]), article h1", timeout=15_000)
     return page
 
@@ -315,7 +327,7 @@ def test_frontmatter_shown_without_raw_yaml(browser: Browser, project: Path) -> 
         page.close()
 
 
-def test_nav_driven_by_concepts_json(browser: Browser, project: Path) -> None:
+def test_nav_driven_by_index_md(browser: Browser, project: Path) -> None:
     with _running_server(project) as address:
         page = _page(browser, address)
         nav = page.inner_text("#nav")
@@ -401,25 +413,6 @@ def test_log_md_viewable_but_not_navigated(browser: Browser, project: Path) -> N
         page.close()
 
 
-@pytest.mark.parametrize(
-    "path",
-    [
-        "/fleeting/draft.md",
-        "/secret/hidden.md",
-        "/%2e%2e/outside.md",
-        "/deep/leak.md",
-    ],
-)
-def test_denied_fetches_unavailable_through_server(
-    browser: Browser, project: Path, path: str
-) -> None:
-    with _running_server(project) as address:
-        page = browser.new_page()  # type: ignore[attr-defined]
-        resp = page.request.get(f"http://{address}{path}")
-        assert resp.status == 404
-        page.close()
-
-
 def test_denied_route_shows_status_page(browser: Browser, project: Path) -> None:
     with _running_server(project) as address:
         page = _page(browser, address, "#/fleeting/draft.md")
@@ -447,17 +440,6 @@ def test_encoded_filename_link_navigates(browser: Browser, project: Path) -> Non
         page.close()
 
 
-def test_malformed_concepts_json_falls_back_to_index_nav(
-    browser: Browser, project: Path
-) -> None:
-    (project / "alpha" / "concepts.json").write_text("{ not json")
-    with _running_server(project) as address:
-        page = _page(browser, address)
-        page.wait_for_selector("#nav a[href$='root-note.md']", timeout=10_000)
-        assert "unreadable" in page.inner_text("#nav")
-        page.close()
-
-
 def test_fragment_prefers_body_heading_over_frontmatter_title(
     browser: Browser, project: Path
 ) -> None:
@@ -479,16 +461,45 @@ def test_invalid_frontmatter_stays_visible(browser: Browser, project: Path) -> N
         page.close()
 
 
-def test_rendered_html_is_sanitized(browser: Browser, project: Path) -> None:
+def test_bundle_markup_cannot_execute(browser: Browser, project: Path) -> None:
     with _running_server(project) as address:
-        page = _page(browser, address, "#/hostile.md")
+        requests: list[str] = []
+        page = browser.new_page()
+        page.on("request", lambda req: requests.append(req.url))
+        page.goto(f"http://{address}/.okf/#/hostile.md")
+        page.wait_for_selector("article img.okf-broken", timeout=15_000)
         assert page.evaluate("() => window.__xss === undefined")
         assert page.evaluate("() => window.__err === undefined")
+        # html:false rendering shows raw HTML as text: no active elements
+        # from bundle markup ever exist, so there is nothing to sanitize.
         assert page.locator("article script").count() == 0
         assert page.locator("article set, article animate").count() == 0
         remote_img = page.locator("article img.okf-broken")
         assert remote_img.count() == 1
         assert remote_img.get_attribute("src") is None
+        assert not any("example.com" in url for url in requests)
+        page.close()
+
+
+def test_frontmatter_closes_only_on_full_line(browser: Browser, project: Path) -> None:
+    with _running_server(project) as address:
+        page = _page(browser, address, "#/dashes.md")
+        assert page.inner_text("#fm-head h1") == "Dashed"
+        assert page.inner_text("#fm-description") == "a --- b"
+        assert "Body after dashes" in page.inner_text("article")
+        assert "description:" not in page.inner_text("article")
+        page.close()
+
+
+def test_unicode_heading_fragment(browser: Browser, project: Path) -> None:
+    with _running_server(project) as address:
+        page = _page(browser, address, "#/unicode.md")
+        assert page.evaluate("document.getElementById('café-naïve') !== null")
+        page.click("text=the unicode section")
+        page.wait_for_function(
+            "decodeURIComponent(location.hash).includes('café-naïve')",
+            timeout=10_000,
+        )
         page.close()
 
 
