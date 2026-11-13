@@ -298,7 +298,9 @@ def test_near_duplicate_warnings_reports_unparsed_documents(tmp_path: Path) -> N
     assert result.problems[0].kind == "parse-error"
 
 
-@pytest.mark.parametrize("threshold", [float("nan"), float("inf"), -0.01, 1.01])
+@pytest.mark.parametrize(
+    "threshold", [float("nan"), float("inf"), -0.01, 1.01, 10**309]
+)
 def test_find_near_duplicates_rejects_invalid_threshold(threshold: float) -> None:
     with pytest.raises(ValueError, match="threshold"):
         find_near_duplicates(

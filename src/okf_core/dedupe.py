@@ -116,7 +116,8 @@ def find_near_duplicates(
 
     if isinstance(threshold, bool) or not isinstance(threshold, (int, float)):
         raise TypeError("threshold must be a finite number from 0 to 1")
-    if not math.isfinite(threshold) or not 0 <= threshold <= 1:
+    # Range first: math.isfinite(10**309) raises OverflowError.
+    if not 0 <= threshold <= 1 or not math.isfinite(threshold):
         raise ValueError("threshold must be a finite number from 0 to 1")
     if shingle_size < 1:
         raise ValueError("shingle_size must be at least 1")
