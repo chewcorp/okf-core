@@ -78,6 +78,34 @@ def test_empty_bodies_are_exact_duplicates() -> None:
     assert warnings[0].basis.shared_terms_sample == ()
 
 
+def test_distinct_text_without_ascii_words_does_not_warn() -> None:
+    assert (
+        find_near_duplicates(
+            [
+                ("concepts/a.md", "東京の知識は別の主題です。"),
+                ("concepts/b.md", "大阪の港は船舶を扱います。"),
+            ]
+        )
+        == ()
+    )
+    assert (
+        find_near_duplicates(
+            [
+                ("concepts/a.md", "---"),
+                ("concepts/b.md", "###"),
+            ]
+        )
+        == ()
+    )
+
+
+def test_identical_text_without_ascii_words_warns() -> None:
+    body = "東京の知識は別の主題です。"
+    warnings = find_near_duplicates([("concepts/a.md", body), ("concepts/b.md", body)])
+    assert len(warnings) == 1
+    assert warnings[0].similarity == 1.0
+
+
 def test_empty_body_does_not_match_text() -> None:
     assert (
         find_near_duplicates(

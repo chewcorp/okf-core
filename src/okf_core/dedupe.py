@@ -68,6 +68,7 @@ class _PreparedDocument:
     path: str
     shingles: frozenset[tuple[str, ...]]
     terms: frozenset[str]
+    normalized: str
 
 
 def find_near_duplicates(
@@ -85,7 +86,8 @@ def find_near_duplicates(
     is the alphabetically first shared words, at most 8. Each record's
     ``destructive`` field is ``False``: this function never modifies text.
 
-    ``shingle_size`` must be at least 1.
+    Bodies with no ASCII words are not shingled: they warn only when the
+    normalized text is identical. ``shingle_size`` must be at least 1.
     """
 
     if shingle_size < 1:
@@ -166,6 +168,7 @@ def _prepare_document(path: str, body: str, shingle_size: int) -> _PreparedDocum
         path=path,
         shingles=_shingles(tokens, shingle_size),
         terms=frozenset(tokens),
+        normalized=" ".join(body.casefold().split()),
     )
 
 
@@ -186,13 +189,19 @@ def _shingles(tokens: tuple[str, ...], size: int) -> frozenset[tuple[str, ...]]:
     )
 
 
+def _similarity(left: _PreparedDocument, right: _PreparedDocument) -> float:
+    # shortcut: bodies with no ASCII words are not shingled; only an exact
+    # normalized match scores 1.0. Upgrade if non-Latin notes need partial overlap.
+    if not left.terms and not right.terms:
+        if left.normalized == right.normalized:
+            return 1.0
+        return 0.0
+    return _jaccard(left.shingles, right.shingles)
+
+
 def _jaccard(
     left: frozenset[tuple[str, ...]], right: frozenset[tuple[str, ...]]
 ) -> float:
-    # shortcut: two empty bodies score 1.0 and warn; upgrade if stub
-    # concepts should be ignored.
-    if not left and not right:
-        return 1.0
     if not left or not right:
         return 0.0
     intersection = len(left & right)
@@ -215,7 +224,7 @@ def _pair_warning(
 ) -> NearDuplicateWarning | None:
     if left.path == right.path:
         return None
-    similarity = _jaccard(left.shingles, right.shingles)
+    similarity = _similarity(left, right)
     if similarity < threshold:
         return None
     first, second = sorted((left, right), key=lambda item: item.path)
