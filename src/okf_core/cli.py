@@ -55,6 +55,12 @@ from okf_core import (
     serialize_concept_document,
     validate_bundle,
 )
+from okf_core.dedupe import (
+    NearDuplicateWarning,
+    format_near_duplicate_warning,
+    near_duplicate_warnings,
+)
+from okf_core.documents import ValidationFinding
 from okf_core.logs import log_append, plan_log_append
 from okf_core.moves import move_concept, plan_move_concept
 from okf_core.orientation import ORIENTATION_GUIDE
@@ -327,6 +333,59 @@ def scan(config_path: str | None, bundle_name: str, quiet: bool) -> None:
         sys.exit(1)
 
 
+def _finding_count(
+    findings: Mapping[Path, Sequence[ValidationFinding]],
+    *,
+    severity: str,
+) -> int:
+    return sum(
+        finding.severity == severity
+        for path_findings in findings.values()
+        for finding in path_findings
+    )
+
+
+def _findings_payload(
+    findings: Mapping[Path, Sequence[ValidationFinding]],
+) -> dict[str, list[dict[str, Any]]]:
+    return {
+        str(path): [
+            {
+                "severity": finding.severity,
+                "message": finding.message,
+                "field": finding.field,
+                "line": finding.line,
+            }
+            for finding in path_findings
+        ]
+        for path, path_findings in findings.items()
+    }
+
+
+def _echo_validation_report(
+    bundle_name: str,
+    findings: Mapping[Path, Sequence[ValidationFinding]],
+    duplicates: Sequence[NearDuplicateWarning],
+    *,
+    include_warnings: bool,
+) -> None:
+    result: dict[str, Any] = {
+        "bundle": bundle_name,
+        "findings": _findings_payload(findings),
+    }
+    if include_warnings:
+        result["warnings"] = [warning.as_dict() for warning in duplicates]
+    click.echo(json.dumps(result, cls=_Encoder, indent=2))
+    for warning in duplicates:
+        click.echo(format_near_duplicate_warning(warning), err=True)
+    error_count = _finding_count(findings, severity="error")
+    warning_count = _finding_count(findings, severity="warning") + len(duplicates)
+    click.echo(
+        f"Validated bundle {bundle_name!r}: {error_count} errors, {warning_count} warnings",
+        err=True,
+    )
+
+
 @cli.command()
 @click.option(
     "--config",
@@ -349,7 +408,27 @@ def scan(config_path: str | None, bundle_name: str, quiet: bool) -> None:
     is_flag=True,
     help="Suppress command output and summary (does not suppress configuration/load errors).",
 )
-def validate(config_path: str | None, bundle_name: str, quiet: bool) -> None:
+@click.option(
+    "--dedupe",
+    is_flag=True,
+    help=(
+        "Flag near-duplicate concept bodies (shingle Jaccard at or above 0.80) "
+        "as soft warnings. Does not modify files or affect the exit code."
+    ),
+)
+@click.option(
+    "--json",
+    "json_output",
+    is_flag=True,
+    help="With --dedupe, include structured near-duplicate warnings in the JSON output.",
+)
+def validate(
+    config_path: str | None,
+    bundle_name: str,
+    quiet: bool,
+    dedupe: bool,
+    json_output: bool,
+) -> None:
     """Validate a bundle.
 
     Checks every concept document against the configured profile, every
@@ -359,40 +438,27 @@ def validate(config_path: str | None, bundle_name: str, quiet: bool) -> None:
     YYYY-MM-DD) and newest-first section order (error severity; affects the
     exit code). Bundles without log.md are unchanged. Emits findings as JSON
     unless quiet is True.
+
+    ``--dedupe`` compares bodies of concepts that have no error-severity
+    finding, using 5-word shingle Jaccard similarity, and reports pairs at
+    or above 0.80. Those warnings suggest merging or linking the two files.
+    They are advisory only. ``--json`` adds the structured warning records
+    to the JSON object; without it, the same warnings are printed on stderr
+    and the findings JSON is unchanged.
     """
     cfg, bundle = _load(config_path, bundle_name)
     findings = validate_bundle(bundle, cfg)
-    error_count = 0
-    if quiet:
-        for path_findings in findings.values():
-            for f in path_findings:
-                if f.severity == "error":
-                    error_count += 1
-    else:
-        warning_count = 0
-        findings_dict: dict[str, list[dict[str, Any]]] = {}
-        for path, path_findings in findings.items():
-            findings_dict[str(path)] = [
-                {
-                    "severity": f.severity,
-                    "message": f.message,
-                    "field": f.field,
-                    "line": f.line,
-                }
-                for f in path_findings
-            ]
-            for f in path_findings:
-                if f.severity == "error":
-                    error_count += 1
-                else:
-                    warning_count += 1
-        result: dict[str, Any] = {"bundle": bundle.name, "findings": findings_dict}
-        click.echo(json.dumps(result, cls=_Encoder, indent=2))
-        click.echo(
-            f"Validated bundle {bundle.name!r}: {error_count} errors, {warning_count} warnings",
-            err=True,
+    duplicates: tuple[NearDuplicateWarning, ...] = ()
+    if dedupe and not quiet:
+        duplicates = near_duplicate_warnings(bundle, findings)
+    if not quiet:
+        _echo_validation_report(
+            bundle.name,
+            findings,
+            duplicates,
+            include_warnings=dedupe and json_output,
         )
-    if error_count:
+    if _finding_count(findings, severity="error"):
         sys.exit(1)
 
 

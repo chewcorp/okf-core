@@ -172,7 +172,7 @@ Use `--quiet` or `-q` to suppress command output and summary. When quiet mode is
 Validates all concept documents against the configured profile, checks every concept-bearing directory's committed `index.md` for drift against its directory, and checks every existing `log.md` for OKF v0.2 §9 heading format and newest-first date order:
 
 ```sh
-okf validate [--config PATH] [--bundle NAME] [--quiet]
+okf validate [--config PATH] [--bundle NAME] [--quiet] [--dedupe] [--json]
 ```
 
 Output: `{"bundle": "...", "findings": {"path": [{"severity": "...", "message": "...", "field": "...", "line": ...}]}}`
@@ -186,6 +186,25 @@ Findings also include an index freshness check: for every concept-bearing direct
 Findings also include a log conformance check (OKF v0.2 §9). Every existing `log.md` at any hierarchy level is parsed and checked so date headings are valid ISO 8601 `YYYY-MM-DD` calendar dates and date-grouped sections are newest first. A heading that is not that form, a later section that is not strictly older than the previous one (including duplicate dates), and an existing `log.md` that cannot be read are `severity="error"` findings keyed at the `log.md` path. A missing `log.md` is out of scope, so bundles without one validate as they do today. Unlike index drift, these errors affect the exit code.
 
 Use `--quiet` or `-q` to suppress validation findings (on stdout) and the validation summary (on stderr), leaving the exit code as the sole signal for validation success/failure. Note that configuration/load errors (which exit with code `2`) are still printed to stderr.
+
+`--dedupe` compares the bodies of concepts that have no error-severity finding, using 5-word shingle Jaccard similarity, and reports each pair at or above 0.80. It does not modify files, and these warnings never change the exit code. Each pair is printed on stderr, naming both bundle-relative paths and suggesting that they be merged or linked. Pass `--json` as well to include the same warnings as a `warnings` array on the JSON object; `bundle` and `findings` stay as they are without the flag. `--json` without `--dedupe` does not change the JSON object. Records are ordered by path pair ascending (`left`, then `right`), then by similarity descending. `left` is the alphabetically earlier path.
+
+```json
+{
+  "code": "near_duplicate",
+  "left": "concepts/a.md",
+  "right": "concepts/b.md",
+  "similarity": 0.84,
+  "threshold": 0.8,
+  "basis": {
+    "method": "shingle_jaccard",
+    "shingle_size": 5,
+    "shared_terms_sample": ["agent", "receipt", "validation"]
+  },
+  "suggested_action": "merge_or_link",
+  "destructive": false
+}
+```
 
 ### `okf list-concepts`
 
@@ -711,6 +730,8 @@ Matching is driven entirely by parsing the document with `markdown-it-py`: each 
 - Profile-required frontmatter fields (errors if missing; skipped if `is_directory_meta=True`). When the document's `type` has a matching `[profiles.<name>.type_fields.<type>]` entry, that type's `required_frontmatter` is checked additively alongside the profile-wide list.
 - Undocumented custom frontmatter fields (warnings if present but not defined in the profile, standard OKF fields, or the document's type-scoped `type_fields` required/optional lists; skipped if `is_directory_meta=True`).
 - Taxonomy type rules (errors if type violates profile/project `allowed_types`, warnings if type violates `known_types`). Note that if `is_directory_meta=True` is provided and the document type starts with an underscore (such as `_directory`), taxonomy checks are bypassed to accommodate local directory metadata without taxonomy configuration changes.
+
+`find_near_duplicates(documents, *, threshold=0.8, shingle_size=5)` compares `(path, body)` pairs with word-shingle Jaccard similarity and returns a tuple of `NearDuplicateWarning` records (`code`, `left`, `right`, `similarity`, `threshold`, `basis`, `suggested_action`, `destructive`) for pairs at or above `threshold`. `basis` is a `NearDuplicateBasis` (`method`, `shingle_size`, `shared_terms_sample`). `shared_terms_sample` is the alphabetically first words that appear in both bodies, at most 8. `near_duplicate_warnings(bundle, findings)` is what `okf validate --dedupe` calls: it scans `bundle`, skips any concept whose path has an error-severity finding, and compares the remaining bodies. Neither function writes files. A `shingle_size` below 1 raises `ValueError`.
 
 `validate_bundle(bundle, config)` scans a bundle and validates all of its concept documents against the configured profile, returning a mapping of file paths to their respective validation findings. Any scan or parsing failures are reported as validation errors. It also runs `check_attribution_consistency()` (below) against every concept unconditionally, since the check is base spec behavior rather than profile-specific. For every concept-bearing directory that has a committed `index.md`, it regenerates that directory's index the same way `okf index` would (via `entries_for_directory()` and `generate_index()`) and runs `diff_index()` (see [Index Files](#index-files) above) against the committed content, recording any drift under the `index.md` path itself. `concept_directories(manifest, resolved_bundle_root)` -- extracted from `okf index`'s own directory-discovery logic, the same precedent `entries_for_directory()` set (#69) -- supplies the set of directories this check walks. A directory with no committed `index.md` is skipped entirely (out of scope for this check); every finding it does produce is `severity="warning"`. It also checks every existing `log.md` at any hierarchy level for OKF v0.2 §9 ISO 8601 `YYYY-MM-DD` date headings and newest-first section order, recording error-severity findings under the `log.md` path. A bundle with no `log.md` skips this check.
 

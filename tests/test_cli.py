@@ -48,6 +48,31 @@ def _write_concept(path: Path, *, title: str, type_: str = "concept") -> None:
     )
 
 
+def _write_typed_body(
+    path: Path,
+    body: str,
+    *,
+    title: str = "Note",
+    type_: str | None = "concept",
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    type_line = f"type: {type_}\n" if type_ is not None else ""
+    path.write_text(
+        f"---\n{type_line}title: {title}\n---\n{body}",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
+def _bundle_config(tmp_path: Path) -> Path:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n',
+        encoding="utf-8",
+    )
+    return config_path
+
+
 def _write_future_root_index(root: Path) -> None:
     (root / "index.md").write_text(
         "---\nokf_version: '0.3'\n---\n# Future Bundle\n",
@@ -89,7 +114,12 @@ def test_scan_help_exits_zero() -> None:
 
 
 def test_validate_help_exits_zero() -> None:
-    assert _runner().invoke(cli, ["validate", "--help"]).exit_code == 0
+    result = _runner().invoke(cli, ["validate", "--help"])
+    assert result.exit_code == 0
+    text = _collapsed_help_text(result.stdout)
+    assert "--dedupe" in text
+    assert "--json" in text
+    assert "near-duplicate" in text
 
 
 def test_list_concepts_help_exits_zero() -> None:
@@ -546,6 +576,225 @@ def test_validate_index_drift_warning_does_not_mask_coexisting_error(
     index_key = str(tmp_path / "index.md")
     assert index_key in data["findings"]
     assert all(f["severity"] == "warning" for f in data["findings"][index_key])
+
+
+_EXACT_BODY = "Agent receipt validation confirms the bundle before merge.\n"
+_EXACT_TERMS = [
+    "agent",
+    "before",
+    "bundle",
+    "confirms",
+    "merge",
+    "receipt",
+    "the",
+    "validation",
+]
+
+
+def test_validate_dedupe_exact_duplicate_warns_near_one(tmp_path: Path) -> None:
+    config_path = _bundle_config(tmp_path)
+    left = tmp_path / "concepts" / "a.md"
+    right = tmp_path / "concepts" / "b.md"
+    _write_typed_body(left, _EXACT_BODY, title="Receipt")
+    _write_typed_body(right, _EXACT_BODY, title="Receipt")
+    before = {path: path.read_bytes() for path in (left, right)}
+
+    result = _runner().invoke(
+        cli, ["validate", "--dedupe", "--json", "--config", str(config_path)]
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["findings"] == {}
+    assert data["warnings"] == [
+        {
+            "code": "near_duplicate",
+            "left": "concepts/a.md",
+            "right": "concepts/b.md",
+            "similarity": 1.0,
+            "threshold": 0.8,
+            "basis": {
+                "method": "shingle_jaccard",
+                "shingle_size": 5,
+                "shared_terms_sample": _EXACT_TERMS,
+            },
+            "suggested_action": "merge_or_link",
+            "destructive": False,
+        }
+    ]
+    stderr = result.stderr or ""
+    assert "concepts/a.md and concepts/b.md are near-duplicates" in stderr
+    assert "merging or linking" in stderr
+    assert "0 errors, 1 warnings" in stderr
+    assert {path: path.read_bytes() for path in (left, right)} == before
+
+
+def test_validate_dedupe_different_canonical_terms_do_not_warn(
+    tmp_path: Path,
+) -> None:
+    config_path = _bundle_config(tmp_path)
+    _write_typed_body(
+        tmp_path / "concepts" / "a.md",
+        "The validation receipt records that an agent accepted the submitted bundle during review.\n",
+        title="Receipt",
+    )
+    _write_typed_body(
+        tmp_path / "concepts" / "b.md",
+        "A check token stores whether a worker approved the catalog after inspection.\n",
+        title="Token",
+    )
+
+    result = _runner().invoke(
+        cli, ["validate", "--dedupe", "--json", "--config", str(config_path)]
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["findings"] == {}
+    assert data["warnings"] == []
+
+
+def test_validate_dedupe_shared_boilerplate_does_not_warn(tmp_path: Path) -> None:
+    config_path = _bundle_config(tmp_path)
+    template = (
+        "# Note\n\n"
+        "## Context\n\n"
+        "This note follows the standard concept template for source claims.\n\n"
+    )
+    _write_typed_body(
+        tmp_path / "concepts" / "leaf.md",
+        template
+        + "Chlorophyll pigments absorb blue and red wavelengths while reflecting green. "
+        + "Leaf mesophyll cells store starch grains after the calvin cycle fixes carbon dioxide. "
+        + "Thylakoid membranes house photosystems that split water and release oxygen gas.\n",
+        title="Photosynthesis",
+    )
+    _write_typed_body(
+        tmp_path / "concepts" / "sea.md",
+        template
+        + "Admiralty jurisdiction covers collisions between cargo vessels in territorial waters. "
+        + "Salvage awards compensate rescuers who recover hulls from a storm without a contract. "
+        + "General average apportions sacrifice of jettisoned freight across the remaining voyage.\n",
+        title="Admiralty",
+    )
+
+    result = _runner().invoke(
+        cli, ["validate", "--dedupe", "--json", "--config", str(config_path)]
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["warnings"] == []
+
+
+def test_validate_dedupe_orders_warnings_by_path_pair_then_score(
+    tmp_path: Path,
+) -> None:
+    config_path = _bundle_config(tmp_path)
+    lower = " ".join(f"w{index}" for index in range(13))
+    lower_neighbor = " ".join([*(f"w{index}" for index in range(12)), "other"])
+    higher = (
+        "Maintainer notes stay unique when the bundle records a separate "
+        "decision about caching indexes.\n"
+    )
+    _write_typed_body(tmp_path / "concepts" / "m.md", higher, title="Cache")
+    _write_typed_body(tmp_path / "concepts" / "a.md", lower, title="Alpha")
+    _write_typed_body(tmp_path / "concepts" / "n.md", higher, title="Cache")
+    _write_typed_body(tmp_path / "concepts" / "b.md", lower_neighbor, title="Beta")
+
+    result = _runner().invoke(
+        cli, ["validate", "--dedupe", "--json", "--config", str(config_path)]
+    )
+
+    assert result.exit_code == 0
+    warnings = json.loads(result.stdout)["warnings"]
+    assert [(item["left"], item["right"]) for item in warnings] == [
+        ("concepts/a.md", "concepts/b.md"),
+        ("concepts/m.md", "concepts/n.md"),
+    ]
+    assert warnings[0]["similarity"] >= 0.8
+    assert warnings[0]["similarity"] < warnings[1]["similarity"]
+    assert warnings[1]["similarity"] == 1.0
+
+
+def test_validate_dedupe_json_preserves_findings_and_adds_warnings(
+    tmp_path: Path,
+) -> None:
+    config_path = _bundle_config(tmp_path)
+    _write_typed_body(tmp_path / "concepts" / "a.md", _EXACT_BODY, title="Receipt")
+    _write_typed_body(tmp_path / "concepts" / "b.md", _EXACT_BODY, title="Receipt")
+    bad = tmp_path / "concepts" / "bad.md"
+    _write_typed_body(bad, _EXACT_BODY, title="Receipt", type_=None)
+
+    plain = _runner().invoke(cli, ["validate", "--config", str(config_path)])
+    result = _runner().invoke(
+        cli, ["validate", "--dedupe", "--json", "--config", str(config_path)]
+    )
+
+    assert plain.exit_code == 1
+    assert result.exit_code == 1
+    plain_data = json.loads(plain.stdout)
+    data = json.loads(result.stdout)
+    assert data["bundle"] == plain_data["bundle"] == "default"
+    assert data["findings"] == plain_data["findings"]
+    assert data["findings"][str(bad)] == [
+        {
+            "severity": "error",
+            "message": "Missing required frontmatter field: type",
+            "field": "type",
+            "line": None,
+        }
+    ]
+    assert "warnings" not in plain_data
+    assert [item["left"] for item in data["warnings"]] == ["concepts/a.md"]
+    assert [item["right"] for item in data["warnings"]] == ["concepts/b.md"]
+    assert all(item["destructive"] is False for item in data["warnings"])
+
+
+def test_validate_dedupe_without_json_keeps_findings_json(tmp_path: Path) -> None:
+    config_path = _bundle_config(tmp_path)
+    _write_typed_body(tmp_path / "concepts" / "a.md", _EXACT_BODY, title="Receipt")
+    _write_typed_body(tmp_path / "concepts" / "b.md", _EXACT_BODY, title="Receipt")
+
+    result = _runner().invoke(
+        cli, ["validate", "--dedupe", "--config", str(config_path)]
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data == {"bundle": "default", "findings": {}}
+    stderr = result.stderr or ""
+    assert "concepts/a.md and concepts/b.md are near-duplicates" in stderr
+    assert "merging or linking" in stderr
+
+
+def test_validate_json_without_dedupe_matches_ordinary_output(tmp_path: Path) -> None:
+    config_path = _bundle_config(tmp_path)
+    _write_typed_body(tmp_path / "concepts" / "a.md", _EXACT_BODY, title="Receipt")
+
+    plain = _runner().invoke(cli, ["validate", "--config", str(config_path)])
+    result = _runner().invoke(cli, ["validate", "--json", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    assert result.stdout == plain.stdout
+    assert "near-duplicates" not in (result.stderr or "")
+
+
+def test_validate_dedupe_quiet_stays_silent_and_successful(tmp_path: Path) -> None:
+    config_path = _bundle_config(tmp_path)
+    left = tmp_path / "concepts" / "a.md"
+    right = tmp_path / "concepts" / "b.md"
+    _write_typed_body(left, _EXACT_BODY, title="Receipt")
+    _write_typed_body(right, _EXACT_BODY, title="Receipt")
+    before = {path: path.read_bytes() for path in (left, right)}
+
+    result = _runner().invoke(
+        cli, ["validate", "--dedupe", "--quiet", "--config", str(config_path)]
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == ""
+    assert (result.stderr or "") == ""
+    assert {path: path.read_bytes() for path in (left, right)} == before
 
 
 # ---------------------------------------------------------------------------

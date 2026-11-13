@@ -43,7 +43,7 @@ To interact with or integrate a bundle, start with these essential commands:
   ```sh
   okf list-concepts
   ```
-- **Validate**: Check the bundle for spec conformance and profile rules, every directory's committed `index.md` for drift against its own content, and every existing `log.md` for OKF v0.2 §9 date headings (ISO 8601 `YYYY-MM-DD`, newest first).
+- **Validate**: Check the bundle for spec conformance and profile rules, every directory's committed `index.md` for drift against its own content, and every existing `log.md` for OKF v0.2 §9 date headings (ISO 8601 `YYYY-MM-DD`, newest first). `okf validate --dedupe` also flags near-duplicate concept bodies as soft warnings; see `okf validate --help`.
   ```sh
   okf validate
   ```

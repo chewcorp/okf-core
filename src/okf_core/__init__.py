@@ -38,6 +38,12 @@ from okf_core.context import (
     ContextPackProblem,
     build_context_pack,
 )
+from okf_core.dedupe import (
+    NearDuplicateBasis,
+    NearDuplicateWarning,
+    find_near_duplicates,
+    near_duplicate_warnings,
+)
 from okf_core.documents import (
     ConceptDocument,
     DocumentParseError,
@@ -286,6 +292,8 @@ __all__ = [
     "MarkdownLink",
     "MovePreparation",
     "MoveResult",
+    "NearDuplicateBasis",
+    "NearDuplicateWarning",
     "NormalizedBundleGraph",
     "OkfConfig",
     "ParsedIndex",
@@ -323,6 +331,7 @@ __all__ = [
     "entries_for_directory",
     "extract_footnote_occurrences",
     "extract_markdown_links",
+    "find_near_duplicates",
     "find_unlinked_mentions",
     "generate_index",
     "graph_report_payload",
@@ -338,6 +347,7 @@ __all__ = [
     "log_concept_move",
     "migrate_cache",
     "move_concept",
+    "near_duplicate_warnings",
     "neighborhood",
     "normalize_bundle_graph",
     "okf_version_for_index_write",
