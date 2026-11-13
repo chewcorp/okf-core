@@ -26,7 +26,11 @@ classifiers = [
 ]
 dependencies = [
   "click >= 8, < 9",
-  "markdown-it-py >= 3, < 5",
+  # shortcut: < 4.3 because the log-append "tokenizes differently once
+  # labelled" test fixture relies on a code-span bug 4.3.0 fixed
+  # (markdown-it-py#439) and fuzzing finds no 4.3 pair (CCP-1047); lift
+  # when a 4.3 counterexample exists or the test is retired.
+  "markdown-it-py >= 3, < 4.3",
   "mdformat >= 1.0, < 2",
   "mdformat-gfm >= 1.0, < 2",
   "pluggy >= 1.0, < 2",
