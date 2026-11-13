@@ -142,6 +142,29 @@ def test_reported_similarity_stays_at_or_above_threshold() -> None:
     assert kept[0].similarity >= kept[0].threshold
 
 
+def test_spaced_cyrillic_near_the_threshold_warns() -> None:
+    words = [
+        "один",
+        "два",
+        "три",
+        "четыре",
+        "пять",
+        "шесть",
+        "семь",
+        "восемь",
+        "девять",
+        "десять",
+        "одиннадцать",
+        "двенадцать",
+        "тринадцать",
+    ]
+    left = " ".join(words)
+    right = " ".join([*words[:-1], "другое"])
+    warnings = find_near_duplicates([("concepts/a.md", left), ("concepts/b.md", right)])
+    assert len(warnings) == 1
+    assert warnings[0].similarity == 0.8
+
+
 def test_shared_ascii_heading_does_not_hide_distinct_non_latin_bodies() -> None:
     assert (
         find_near_duplicates(
