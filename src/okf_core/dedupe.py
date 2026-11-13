@@ -114,8 +114,10 @@ def find_near_duplicates(
     must be at least 1.
     """
 
-    if isinstance(threshold, bool) or not isinstance(threshold, (int, float)):
-        raise TypeError("threshold must be a finite number from 0 to 1")
+    # type() rather than isinstance so bool is not treated as an int.
+    # Every invalid threshold is ValueError, including a non-number.
+    if type(threshold) is not int and type(threshold) is not float:
+        raise ValueError("threshold must be a finite number from 0 to 1")
     # Range first: math.isfinite(10**309) raises OverflowError.
     if not 0 <= threshold <= 1 or not math.isfinite(threshold):
         raise ValueError("threshold must be a finite number from 0 to 1")

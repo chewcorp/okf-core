@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -299,9 +300,10 @@ def test_near_duplicate_warnings_reports_unparsed_documents(tmp_path: Path) -> N
 
 
 @pytest.mark.parametrize(
-    "threshold", [float("nan"), float("inf"), -0.01, 1.01, 10**309]
+    "threshold",
+    [float("nan"), float("inf"), -0.01, 1.01, 10**309, True, False, "0.8"],
 )
-def test_find_near_duplicates_rejects_invalid_threshold(threshold: float) -> None:
+def test_find_near_duplicates_rejects_invalid_threshold(threshold: Any) -> None:
     with pytest.raises(ValueError, match="threshold"):
         find_near_duplicates(
             [("concepts/a.md", "alpha bravo charlie delta echo")],
