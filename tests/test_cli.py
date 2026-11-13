@@ -779,6 +779,36 @@ def test_validate_json_without_dedupe_matches_ordinary_output(tmp_path: Path) ->
     assert "near-duplicates" not in (result.stderr or "")
 
 
+def test_validate_dedupe_scans_the_bundle_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import okf_core.cli as cli_module
+    import okf_core.dedupe as dedupe_module
+    import okf_core.validation as validation_module
+
+    config_path = _bundle_config(tmp_path)
+    _write_typed_body(tmp_path / "concepts" / "a.md", _EXACT_BODY, title="Receipt")
+    _write_typed_body(tmp_path / "concepts" / "b.md", _EXACT_BODY, title="Receipt")
+    calls = {"n": 0}
+    real_scan = validation_module.scan_bundle
+
+    def counting(bundle: Any) -> Any:
+        calls["n"] += 1
+        return real_scan(bundle)
+
+    monkeypatch.setattr(validation_module, "scan_bundle", counting)
+    monkeypatch.setattr(dedupe_module, "scan_bundle", counting)
+    monkeypatch.setattr(cli_module, "scan_bundle", counting)
+
+    result = _runner().invoke(
+        cli, ["validate", "--dedupe", "--json", "--config", str(config_path)]
+    )
+
+    assert result.exit_code == 0
+    assert len(json.loads(result.stdout)["warnings"]) == 1
+    assert calls["n"] == 1
+
+
 def test_validate_dedupe_keeps_scan_errors_in_findings(tmp_path: Path) -> None:
     config_path = _bundle_config(tmp_path)
     _write_typed_body(tmp_path / "concepts" / "a.md", _EXACT_BODY, title="Receipt")

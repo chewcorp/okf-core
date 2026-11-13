@@ -6,22 +6,24 @@ read-only: callers pass text in, and nothing here writes a file.
 
 from __future__ import annotations
 
-import re
+import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from okf_core.config import BundleConfig
 from okf_core.documents import ValidationFinding
-from okf_core.manifest import ConceptManifestEntry, ManifestProblem, scan_bundle
+from okf_core.manifest import (
+    BundleManifest,
+    ConceptManifestEntry,
+    ManifestProblem,
+    scan_bundle,
+)
 
 SHINGLE_SIZE = 5
 NEAR_DUPLICATE_THRESHOLD = 0.8
 SHARED_TERMS_SAMPLE_LIMIT = 8
 _METHOD = "shingle_jaccard"
-# Letters and digits in any script. Underscore stays a separator, matching
-# the previous ASCII class. Unspaced text is one token until punctuation.
-_WORD = re.compile(r"[^\W_]+")
 
 
 @dataclass(frozen=True)
@@ -101,9 +103,11 @@ def find_near_duplicates(
     is the alphabetically first shared words, at most 8. Each record's
     ``destructive`` field is ``False``: this function never modifies text.
 
-    Words are Unicode letters and digits. A run with no spaces, such as
-    unspaced CJK, is one word. Bodies with no words warn only when the
-    normalized text is identical. ``shingle_size`` must be at least 1.
+    Words are Unicode letters and digits, including combining marks, so a
+    vowel sign stays part of the word. A run with no spaces, such as
+    unspaced CJK, is one word. ``similarity`` is the raw ratio, not a
+    rounded value. Bodies with no words warn only when the normalized text
+    is identical. ``shingle_size`` must be at least 1.
     """
 
     if shingle_size < 1:
@@ -124,6 +128,8 @@ def find_near_duplicates(
 def near_duplicate_warnings(
     bundle: BundleConfig,
     findings: Mapping[Path, Sequence[ValidationFinding]],
+    *,
+    manifest: BundleManifest | None = None,
 ) -> NearDuplicateResult:
     """Compare valid concept bodies in ``bundle``.
 
@@ -131,12 +137,15 @@ def near_duplicate_warnings(
     error-severity finding in ``findings``. Paths on each warning are
     bundle-relative and use forward slashes. ``problems`` is the scan's
     own problem tuple, including documents that were not compared.
-    ``okf validate`` already reports those scan problems as error findings
-    from its own scan, and uses only ``warnings`` from this result. This
-    reads the bundle through ``scan_bundle`` and does not write files.
+    Pass ``manifest`` when the caller already scanned ``bundle``; otherwise
+    this function scans. ``okf validate --dedupe`` passes the same manifest
+    it validated, so scan hooks run once. The command reports those scan
+    problems as error findings and prints only ``warnings``. This does not
+    write files.
     """
 
-    manifest = scan_bundle(bundle)
+    if manifest is None:
+        manifest = scan_bundle(bundle)
     root = bundle.bundle_root.resolve()
     error_paths = _error_paths(findings)
     documents: list[tuple[str, str]] = []
@@ -194,8 +203,35 @@ def _prepare_document(path: str, body: str, shingle_size: int) -> _PreparedDocum
     )
 
 
+def _is_token_char(char: str) -> bool:
+    """Return whether ``char`` belongs inside a word token.
+
+    Letters and decimal digits count. Combining marks count too, so a
+    Devanagari vowel sign stays attached to its consonant. Underscore and
+    punctuation separate words.
+    """
+
+    if char == "_":
+        return False
+    category = unicodedata.category(char)
+    return category.startswith(("L", "M")) or category == "Nd"
+
+
 def _tokens(text: str) -> tuple[str, ...]:
-    return tuple(match.group(0).casefold() for match in _WORD.finditer(text))
+    folded = text.casefold()
+    tokens: list[str] = []
+    start: int | None = None
+    for index, char in enumerate(folded):
+        if _is_token_char(char):
+            if start is None:
+                start = index
+            continue
+        if start is not None:
+            tokens.append(folded[start:index])
+            start = None
+    if start is not None:
+        tokens.append(folded[start:])
+    return tuple(tokens)
 
 
 def _shingles(tokens: tuple[str, ...], size: int) -> frozenset[tuple[str, ...]]:
@@ -254,7 +290,7 @@ def _pair_warning(
         code="near_duplicate",
         left=first.path,
         right=second.path,
-        similarity=round(similarity, 4),
+        similarity=similarity,
         threshold=threshold,
         basis=NearDuplicateBasis(
             method=_METHOD,

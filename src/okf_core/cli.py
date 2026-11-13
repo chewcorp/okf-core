@@ -447,10 +447,13 @@ def validate(
     and the findings JSON is unchanged.
     """
     cfg, bundle = _load(config_path, bundle_name)
-    findings = validate_bundle(bundle, cfg)
+    manifest = scan_bundle(bundle) if dedupe and not quiet else None
+    findings = validate_bundle(bundle, cfg, manifest=manifest)
     duplicates: tuple[NearDuplicateWarning, ...] = ()
-    if dedupe and not quiet:
-        duplicates = near_duplicate_warnings(bundle, findings).warnings
+    if manifest is not None:
+        duplicates = near_duplicate_warnings(
+            bundle, findings, manifest=manifest
+        ).warnings
     if not quiet:
         _echo_validation_report(
             bundle.name,

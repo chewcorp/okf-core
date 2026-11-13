@@ -14,6 +14,7 @@ from okf_core.dedupe import (
     find_near_duplicates,
     near_duplicate_warnings,
 )
+from okf_core.manifest import scan_bundle
 
 
 def _warning(left: str, right: str, similarity: float) -> NearDuplicateWarning:
@@ -103,6 +104,44 @@ def test_distinct_text_without_ascii_words_does_not_warn() -> None:
     )
 
 
+def test_hindi_vowel_signs_keep_distinct_words() -> None:
+    assert (
+        find_near_duplicates(
+            [
+                ("concepts/a.md", "कला कला कला कला कला"),
+                ("concepts/b.md", "काला काला काला काला काला"),
+            ]
+        )
+        == ()
+    )
+
+
+def test_underscore_separates_words() -> None:
+    warnings = find_near_duplicates(
+        [
+            ("concepts/a.md", "foo_bar foo_bar foo_bar foo_bar foo_bar"),
+            ("concepts/b.md", "foo bar foo bar foo bar foo bar foo bar"),
+        ]
+    )
+    assert len(warnings) == 1
+    assert warnings[0].similarity == 1.0
+
+
+def test_reported_similarity_stays_at_or_above_threshold() -> None:
+    # 15 tokens, last token changed: 10/12 = 0.8333..., which rounds to 0.8333.
+    left = " ".join(f"w{index}" for index in range(15))
+    right = " ".join([*(f"w{index}" for index in range(14)), "other"])
+    documents = [("concepts/a.md", left), ("concepts/b.md", right)]
+    raw = find_near_duplicates(documents, threshold=0.0)[0].similarity
+    rounded = round(raw, 4)
+    threshold = (rounded + raw) / 2
+    kept = find_near_duplicates(documents, threshold=threshold)
+    assert rounded < threshold <= raw
+    assert len(kept) == 1
+    assert kept[0].similarity == raw
+    assert kept[0].similarity >= kept[0].threshold
+
+
 def test_shared_ascii_heading_does_not_hide_distinct_non_latin_bodies() -> None:
     assert (
         find_near_duplicates(
@@ -168,6 +207,31 @@ def _bundle(root: Path) -> BundleConfig:
         reserved_filenames=("index.md", "log.md"),
         concept_path_strategy="relative-path",
     )
+
+
+def test_near_duplicate_warnings_reuses_a_supplied_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "a.md").write_text(
+        "---\ntype: concept\ntitle: A\n---\nAlpha bravo charlie delta echo.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "b.md").write_text(
+        "---\ntype: concept\ntitle: B\n---\nAlpha bravo charlie delta echo.\n",
+        encoding="utf-8",
+    )
+    bundle = _bundle(tmp_path)
+    manifest = scan_bundle(bundle)
+
+    def fail_scan(bundle: BundleConfig) -> object:
+        raise AssertionError(f"rescanned {bundle.name}")
+
+    monkeypatch.setattr("okf_core.dedupe.scan_bundle", fail_scan)
+    result = near_duplicate_warnings(bundle, {}, manifest=manifest)
+
+    assert result.problems == manifest.problems
+    assert len(result.warnings) == 1
+    assert result.warnings[0].similarity == 1.0
 
 
 def test_near_duplicate_warnings_reports_unparsed_documents(tmp_path: Path) -> None:

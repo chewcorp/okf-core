@@ -32,6 +32,8 @@ if TYPE_CHECKING:
 def validate_bundle(
     bundle: BundleConfig,
     config: OkfConfig,
+    *,
+    manifest: BundleManifest | None = None,
 ) -> dict[Path, tuple[ValidationFinding, ...]]:
     """Validate concept documents, index drift, and existing log.md files.
 
@@ -40,11 +42,15 @@ def validate_bundle(
     ``YYYY-MM-DD`` calendar dates, and date-grouped sections MUST be newest
     first. Findings are keyed at the ``log.md`` path. A bundle with no
     ``log.md`` skips this check.
+
+    ``manifest``, when given, must already be a scan of ``bundle``. It is
+    used instead of scanning again, so scan hooks run only in the call that
+    built it.
     """
     findings: dict[Path, tuple[ValidationFinding, ...]] = {}
 
-    # Scan the bundle to discover and parse concepts
-    manifest = scan_bundle(bundle)
+    if manifest is None:
+        manifest = scan_bundle(bundle)
 
     # Record scan problems as validation errors
     for problem in manifest.problems:
