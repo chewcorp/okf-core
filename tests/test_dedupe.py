@@ -14,6 +14,7 @@ from okf_core.dedupe import (
     find_near_duplicates,
     near_duplicate_warnings,
 )
+from okf_core.documents import ValidationFinding
 from okf_core.manifest import scan_bundle
 
 
@@ -295,6 +296,41 @@ def test_near_duplicate_warnings_reports_unparsed_documents(tmp_path: Path) -> N
     assert len(result.problems) == 1
     assert result.problems[0].path == broken.resolve()
     assert result.problems[0].kind == "parse-error"
+
+
+@pytest.mark.parametrize("threshold", [float("nan"), float("inf"), -0.01, 1.01])
+def test_find_near_duplicates_rejects_invalid_threshold(threshold: float) -> None:
+    with pytest.raises(ValueError, match="threshold"):
+        find_near_duplicates(
+            [("concepts/a.md", "alpha bravo charlie delta echo")],
+            threshold=threshold,
+        )
+
+
+def test_scan_problem_paths_are_not_compared(tmp_path: Path) -> None:
+    body = "---\ntype: concept\ntitle: Note\n---\nAlpha bravo charlie delta echo.\n"
+    left = tmp_path / "a.md"
+    right = tmp_path / "b.md"
+    left.write_text(body, encoding="utf-8")
+    right.write_text(body, encoding="utf-8")
+    bundle = BundleConfig(
+        name="default",
+        bundle_root=tmp_path,
+        include=("**/*.md",),
+        exclude=(),
+        reserved_filenames=("index.md", "log.md"),
+        concept_path_strategy="relative-path",
+        stable_id_field="id",
+    )
+    findings = {
+        left: (ValidationFinding(severity="warning", message="taxonomy"),),
+        right: (ValidationFinding(severity="warning", message="taxonomy"),),
+    }
+
+    result = near_duplicate_warnings(bundle, findings)
+
+    assert result.warnings == ()
+    assert {problem.kind for problem in result.problems} == {"stable-id-missing"}
 
 
 def test_find_near_duplicates_rejects_non_positive_shingle_size() -> None:

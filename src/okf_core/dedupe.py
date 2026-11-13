@@ -6,6 +6,7 @@ read-only: callers pass text in, and nothing here writes a file.
 
 from __future__ import annotations
 
+import math
 import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -109,9 +110,14 @@ def find_near_duplicates(
     not become a word. A run with no spaces, such as unspaced CJK, is one
     word. ``similarity`` is the raw ratio, not a rounded value. Bodies with
     no words warn only when the normalized text is identical.
-    ``shingle_size`` must be at least 1.
+    ``threshold`` must be a finite number from 0 to 1, and ``shingle_size``
+    must be at least 1.
     """
 
+    if isinstance(threshold, bool) or not isinstance(threshold, (int, float)):
+        raise TypeError("threshold must be a finite number from 0 to 1")
+    if not math.isfinite(threshold) or not 0 <= threshold <= 1:
+        raise ValueError("threshold must be a finite number from 0 to 1")
     if shingle_size < 1:
         raise ValueError("shingle_size must be at least 1")
     prepared = [_prepare_document(path, body, shingle_size) for path, body in documents]
@@ -135,8 +141,9 @@ def near_duplicate_warnings(
 ) -> NearDuplicateResult:
     """Compare valid concept bodies in ``bundle``.
 
-    A concept is valid when it was scanned and its path has no
-    error-severity finding in ``findings``. Paths on each warning are
+    A concept is valid when it was scanned, its path is not in the scan's
+    ``problems``, and it has no error-severity finding in ``findings``.
+    Paths on each warning are
     bundle-relative and use forward slashes. ``problems`` is the scan's
     own problem tuple, including documents that were not compared.
     Pass ``manifest`` when the caller already scanned ``bundle``; otherwise
@@ -149,10 +156,11 @@ def near_duplicate_warnings(
     if manifest is None:
         manifest = scan_bundle(bundle)
     root = bundle.bundle_root.resolve()
-    error_paths = _error_paths(findings)
+    excluded = _error_paths(findings)
+    excluded.update(Path(problem.path).resolve() for problem in manifest.problems)
     documents: list[tuple[str, str]] = []
     for entry in manifest.concepts:
-        document = _comparable_document(entry, root, error_paths)
+        document = _comparable_document(entry, root, excluded)
         if document is not None:
             documents.append(document)
     return NearDuplicateResult(
@@ -187,10 +195,10 @@ def _error_paths(
 def _comparable_document(
     entry: ConceptManifestEntry,
     root: Path,
-    error_paths: set[Path],
+    excluded: set[Path],
 ) -> tuple[str, str] | None:
     resolved = entry.path.resolve()
-    if resolved in error_paths:
+    if resolved in excluded:
         return None
     return (resolved.relative_to(root).as_posix(), entry.body)
 
