@@ -779,6 +779,27 @@ def test_validate_json_without_dedupe_matches_ordinary_output(tmp_path: Path) ->
     assert "near-duplicates" not in (result.stderr or "")
 
 
+def test_validate_dedupe_keeps_scan_errors_in_findings(tmp_path: Path) -> None:
+    config_path = _bundle_config(tmp_path)
+    _write_typed_body(tmp_path / "concepts" / "a.md", _EXACT_BODY, title="Receipt")
+    broken = tmp_path / "concepts" / "broken.md"
+    broken.write_text("---\ntype: [unterminated\n---\nBody\n", encoding="utf-8")
+
+    plain = _runner().invoke(cli, ["validate", "--config", str(config_path)])
+    result = _runner().invoke(
+        cli, ["validate", "--dedupe", "--json", "--config", str(config_path)]
+    )
+
+    assert plain.exit_code == 1
+    assert result.exit_code == 1
+    plain_data = json.loads(plain.stdout)
+    data = json.loads(result.stdout)
+    assert data["findings"] == plain_data["findings"]
+    assert data["findings"][str(broken.resolve())][0]["severity"] == "error"
+    assert "parse-error" in data["findings"][str(broken.resolve())][0]["message"]
+    assert data["warnings"] == []
+
+
 def test_validate_dedupe_quiet_stays_silent_and_successful(tmp_path: Path) -> None:
     config_path = _bundle_config(tmp_path)
     left = tmp_path / "concepts" / "a.md"

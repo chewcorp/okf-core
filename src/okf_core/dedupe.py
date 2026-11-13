@@ -13,13 +13,15 @@ from pathlib import Path
 
 from okf_core.config import BundleConfig
 from okf_core.documents import ValidationFinding
-from okf_core.manifest import ConceptManifestEntry, scan_bundle
+from okf_core.manifest import ConceptManifestEntry, ManifestProblem, scan_bundle
 
 SHINGLE_SIZE = 5
 NEAR_DUPLICATE_THRESHOLD = 0.8
 SHARED_TERMS_SAMPLE_LIMIT = 8
 _METHOD = "shingle_jaccard"
-_WORD = re.compile(r"[0-9A-Za-z]+")
+# Letters and digits in any script. Underscore stays a separator, matching
+# the previous ASCII class. Unspaced text is one token until punctuation.
+_WORD = re.compile(r"[^\W_]+")
 
 
 @dataclass(frozen=True)
@@ -64,6 +66,19 @@ class NearDuplicateWarning:
 
 
 @dataclass(frozen=True)
+class NearDuplicateResult:
+    """Near-duplicate warnings plus scan problems from the same pass.
+
+    ``problems`` are documents ``scan_bundle`` could not parse. They are not
+    compared. Callers that only read ``warnings`` still see that the pass
+    skipped something.
+    """
+
+    warnings: tuple[NearDuplicateWarning, ...]
+    problems: tuple[ManifestProblem, ...]
+
+
+@dataclass(frozen=True)
 class _PreparedDocument:
     path: str
     shingles: frozenset[tuple[str, ...]]
@@ -86,7 +101,8 @@ def find_near_duplicates(
     is the alphabetically first shared words, at most 8. Each record's
     ``destructive`` field is ``False``: this function never modifies text.
 
-    Bodies with no ASCII words are not shingled: they warn only when the
+    Words are Unicode letters and digits. A run with no spaces, such as
+    unspaced CJK, is one word. Bodies with no words warn only when the
     normalized text is identical. ``shingle_size`` must be at least 1.
     """
 
@@ -108,13 +124,16 @@ def find_near_duplicates(
 def near_duplicate_warnings(
     bundle: BundleConfig,
     findings: Mapping[Path, Sequence[ValidationFinding]],
-) -> tuple[NearDuplicateWarning, ...]:
-    """Compare valid concept bodies in ``bundle`` and return soft warnings.
+) -> NearDuplicateResult:
+    """Compare valid concept bodies in ``bundle``.
 
     A concept is valid when it was scanned and its path has no
-    error-severity finding in ``findings``. Paths in the result are
-    bundle-relative and use forward slashes. This reads the bundle through
-    ``scan_bundle`` and does not write files.
+    error-severity finding in ``findings``. Paths on each warning are
+    bundle-relative and use forward slashes. ``problems`` is the scan's
+    own problem tuple, including documents that were not compared.
+    ``okf validate`` already reports those scan problems as error findings
+    from its own scan, and uses only ``warnings`` from this result. This
+    reads the bundle through ``scan_bundle`` and does not write files.
     """
 
     manifest = scan_bundle(bundle)
@@ -125,7 +144,10 @@ def near_duplicate_warnings(
         document = _comparable_document(entry, root, error_paths)
         if document is not None:
             documents.append(document)
-    return find_near_duplicates(documents)
+    return NearDuplicateResult(
+        warnings=find_near_duplicates(documents),
+        problems=manifest.problems,
+    )
 
 
 def format_near_duplicate_warning(warning: NearDuplicateWarning) -> str:
@@ -190,8 +212,8 @@ def _shingles(tokens: tuple[str, ...], size: int) -> frozenset[tuple[str, ...]]:
 
 
 def _similarity(left: _PreparedDocument, right: _PreparedDocument) -> float:
-    # shortcut: bodies with no ASCII words are not shingled; only an exact
-    # normalized match scores 1.0. Upgrade if non-Latin notes need partial overlap.
+    # shortcut: unspaced scripts stay one token until punctuation, so overlap
+    # inside that run is not scored. Upgrade if those notes need a segmenter.
     if not left.terms and not right.terms:
         if left.normalized == right.normalized:
             return 1.0

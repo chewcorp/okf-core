@@ -450,7 +450,7 @@ def validate(
     findings = validate_bundle(bundle, cfg)
     duplicates: tuple[NearDuplicateWarning, ...] = ()
     if dedupe and not quiet:
-        duplicates = near_duplicate_warnings(bundle, findings)
+        duplicates = near_duplicate_warnings(bundle, findings).warnings
     if not quiet:
         _echo_validation_report(
             bundle.name,

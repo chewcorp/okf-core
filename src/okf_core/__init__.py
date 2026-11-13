@@ -40,6 +40,7 @@ from okf_core.context import (
 )
 from okf_core.dedupe import (
     NearDuplicateBasis,
+    NearDuplicateResult,
     NearDuplicateWarning,
     find_near_duplicates,
     near_duplicate_warnings,
@@ -293,6 +294,7 @@ __all__ = [
     "MovePreparation",
     "MoveResult",
     "NearDuplicateBasis",
+    "NearDuplicateResult",
     "NearDuplicateWarning",
     "NormalizedBundleGraph",
     "OkfConfig",
