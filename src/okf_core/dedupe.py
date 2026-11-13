@@ -103,11 +103,13 @@ def find_near_duplicates(
     is the alphabetically first shared words, at most 8. Each record's
     ``destructive`` field is ``False``: this function never modifies text.
 
-    Words are Unicode letters and digits, including combining marks, so a
-    vowel sign stays part of the word. A run with no spaces, such as
-    unspaced CJK, is one word. ``similarity`` is the raw ratio, not a
-    rounded value. Bodies with no words warn only when the normalized text
-    is identical. ``shingle_size`` must be at least 1.
+    Words are Unicode letters and numbers, including superscripts. A
+    combining mark counts only when it follows one of those characters, so
+    a vowel sign stays on its letter and a bare variation selector does
+    not become a word. A run with no spaces, such as unspaced CJK, is one
+    word. ``similarity`` is the raw ratio, not a rounded value. Bodies with
+    no words warn only when the normalized text is identical.
+    ``shingle_size`` must be at least 1.
     """
 
     if shingle_size < 1:
@@ -203,18 +205,28 @@ def _prepare_document(path: str, body: str, shingle_size: int) -> _PreparedDocum
     )
 
 
-def _is_token_char(char: str) -> bool:
-    """Return whether ``char`` belongs inside a word token.
+def _is_word_base(char: str) -> bool:
+    """Return whether ``char`` can start or continue a word.
 
-    Letters and decimal digits count. Combining marks count too, so a
-    Devanagari vowel sign stays attached to its consonant. Underscore and
-    punctuation separate words.
+    Letters and every numeric category count, so a superscript in ``m²``
+    stays attached. Underscore and punctuation do not.
     """
 
     if char == "_":
         return False
-    category = unicodedata.category(char)
-    return category.startswith(("L", "M")) or category == "Nd"
+    return unicodedata.category(char).startswith(("L", "N"))
+
+
+def _extends_word(char: str, *, in_word: bool) -> bool:
+    """Return whether ``char`` belongs to the word currently being read.
+
+    A combining mark continues a word and never starts one, so a variation
+    selector after an emoji is not a token of its own.
+    """
+
+    if _is_word_base(char):
+        return True
+    return in_word and unicodedata.category(char).startswith("M")
 
 
 def _tokens(text: str) -> tuple[str, ...]:
@@ -222,7 +234,7 @@ def _tokens(text: str) -> tuple[str, ...]:
     tokens: list[str] = []
     start: int | None = None
     for index, char in enumerate(folded):
-        if _is_token_char(char):
+        if _extends_word(char, in_word=start is not None):
             if start is None:
                 start = index
             continue

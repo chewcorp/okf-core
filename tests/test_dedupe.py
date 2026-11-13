@@ -104,6 +104,30 @@ def test_distinct_text_without_ascii_words_does_not_warn() -> None:
     )
 
 
+def test_superscript_digits_keep_measurements_distinct() -> None:
+    assert (
+        find_near_duplicates(
+            [
+                ("concepts/a.md", "Convert the volume to m² units"),
+                ("concepts/b.md", "Convert the volume to m³ units"),
+            ]
+        )
+        == ()
+    )
+
+
+def test_distinct_emoji_with_variation_selectors_do_not_warn() -> None:
+    assert (
+        find_near_duplicates(
+            [
+                ("concepts/a.md", "☀️"),
+                ("concepts/b.md", "✈️"),
+            ]
+        )
+        == ()
+    )
+
+
 def test_hindi_vowel_signs_keep_distinct_words() -> None:
     assert (
         find_near_duplicates(
