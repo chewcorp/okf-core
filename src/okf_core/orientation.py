@@ -28,7 +28,7 @@ directory_metadata_file = "_directory.yml"
 [bundles.docs]
 # Named bundle inherits/overrides [defaults]
 bundle_root = "docs"
-# Path to cache directory (bundle-level only; required for search and unlinked mentions)
+# Path to cache directory (bundle-level only; required for search, similar and unlinked mentions)
 okf_cache_dir = ".okf-cache"
 # Frontmatter field for stable concept ID (bundle-level only)
 stable_id_field = "id"
@@ -60,6 +60,7 @@ To discover more advanced capabilities, commands, and options:
   ```
 - **Detailed Reference**: Check the bundle's `README.md` for full command specifications and Python library APIs (e.g. `plan_markdown_link_rewrite`, `plan_markdown_section_patch`, `plan_markdown_section_append`, `move_concept`, `plan_graph_repair`, `apply_link_suggestions`, `normalize_bundle_graph`, `acquire_normalized_graph`, `analyze_normalized_graph`, `render_graph_report`, `render_graph_json`, `write_bundle_graph_artifacts`, `run_graph_report`, `render_graph_summary`, `log_concept_move`, `log_append`, `source_upsert`, `stamp_generated`, `stamp_verified`, `stamp_status`, `stamp_stale_after`).
 - **Graph reports**: `okf graph-report [--bundle NAME]... [--output DIR] [--json]` writes generated diagnostics (not wiki notes) under `wiki-graph-out/` by default (`SUMMARY.md`, `<slug>/GRAPH_REPORT.md`, `graph.json`). See `okf graph-report --help` and the README `okf graph-report` section for flags and scope.
+- **Similar Notes**: Run `okf similar --help` to discover up to three unlinked lexical neighbours per concept without editing notes (requires bundle-level caching).
 - **Link Maintenance**: Run `okf unlinked-mentions --help` to discover options for finding concept-title mentions that are not yet linked, and for writing selected suggestions back as Markdown links with `--apply`.
 - **Cache Maintenance**: If a command reports `cache_problems`, or `okf search` exits 2 asking for it, run `okf migrate-db --help` to see how to bring an `okf-cache.db` written by an older `okf-core` to the current schema version. Documents are never touched.
 - **Local Reading**: `okf serve` runs a read-only localhost HTTP server for the bundle (default http://127.0.0.1:8080/), exposing only permitted Markdown and directory `index.md` files — never `fleeting`, dot-segments, cache, or config files. Opening the printed `/.okf/` URL in a browser renders the bundle (frontmatter, links, navigation, Mermaid) through a packaged client-side adapter; every other path serves raw permitted files. See `okf serve --help`.

@@ -201,6 +201,10 @@ from okf_core.search import (
     BundleSearchResults,
     SearchConfigError,
     SearchResult,
+    SimilarConcept,
+    SimilarConceptsResult,
+    SimilarNeighbour,
+    find_similar_concepts,
     search_concepts,
 )
 from okf_core.validation import validate_bundle
@@ -296,6 +300,9 @@ __all__ = [
     "RepairResult",
     "SearchConfigError",
     "SearchResult",
+    "SimilarConcept",
+    "SimilarConceptsResult",
+    "SimilarNeighbour",
     "SuggestionSelection",
     "TaxonomyConfig",
     "TypeFieldsConfig",
@@ -323,6 +330,7 @@ __all__ = [
     "entries_for_directory",
     "extract_footnote_occurrences",
     "extract_markdown_links",
+    "find_similar_concepts",
     "find_unlinked_mentions",
     "generate_index",
     "graph_report_payload",
