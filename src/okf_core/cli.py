@@ -562,10 +562,7 @@ def similar_cmd(
     try:
         similar = find_similar_concepts(bundle, concept_ids)
     except SearchConfigError as exc:
-        message = str(exc)
-        if bundle.okf_cache_dir is None:
-            message = message.removesuffix("similar") + "search"
-        click.echo(f"Search configuration error: {message}", err=True)
+        click.echo(f"Search configuration error: {exc}", err=True)
         sys.exit(2)
     if as_json:
         click.echo(

@@ -168,7 +168,7 @@ def find_similar_concepts(
     bundle-level ``okf_cache_dir`` and raises ``SearchConfigError`` if unavailable.
     Unknown IDs are reported in ``problems`` rather than raised.
     """
-    db = _open_search_cache(bundle, "similar")
+    db = _open_search_cache(bundle, "search")
     manifest = scan_bundle(bundle)
     listing = list_concepts(bundle, manifest=manifest, with_content=True)
     graph = build_bundle_graph(bundle, manifest)
