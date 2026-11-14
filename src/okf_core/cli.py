@@ -34,6 +34,7 @@ from okf_core import (
     build_context_pack,
     concept_directories,
     concept_id_to_path,
+    find_similar_concepts,
     find_unlinked_mentions,
     generate_index,
     link_suggestion_href,
@@ -527,6 +528,79 @@ def search_cmd(
         f"{len(search_results.problems)} problems",
         err=True,
     )
+
+
+@cli.command("similar")
+@click.argument("concept_ids", nargs=-1, required=True, metavar="CONCEPT_ID...")
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    metavar="PATH",
+    help="Path to okf-core.toml (default: search upward from cwd).",
+)
+@click.option(
+    "--bundle",
+    "bundle_name",
+    default="default",
+    show_default=True,
+    metavar="NAME",
+    help="Named bundle from config.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def similar_cmd(
+    concept_ids: tuple[str, ...],
+    config_path: str | None,
+    bundle_name: str,
+    as_json: bool,
+) -> None:
+    """Show up to three unlinked lexical neighbours per concept (no note edits).
+
+    Requires bundle-level okf_cache_dir; refreshes the shared search index.
+    """
+    _, bundle = _load(config_path, bundle_name)
+    try:
+        similar = find_similar_concepts(bundle, concept_ids)
+    except SearchConfigError as exc:
+        click.echo(f"Search configuration error: {exc}", err=True)
+        sys.exit(2)
+    if as_json:
+        click.echo(
+            json.dumps(
+                {
+                    "bundle": bundle.name,
+                    "results": [
+                        {
+                            "concept": result.concept_id,
+                            "neighbours": [
+                                {
+                                    "concept_id": neighbour.concept_id,
+                                    "path": neighbour.path.relative_to(
+                                        bundle.bundle_root
+                                    ).as_posix(),
+                                    "score": neighbour.score,
+                                }
+                                for neighbour in result.neighbours
+                            ],
+                        }
+                        for result in similar.results
+                    ],
+                    "problems": [
+                        _listing_problem_dict(problem) for problem in similar.problems
+                    ],
+                },
+                cls=_Encoder,
+                indent=2,
+            )
+        )
+    else:
+        for result in similar.results:
+            click.echo(result.concept_id)
+            for neighbour in result.neighbours:
+                path = neighbour.path.relative_to(bundle.bundle_root).as_posix()
+                click.echo(f"  {path}  {neighbour.score}")
+        for problem in similar.problems:
+            click.echo(f"{problem.concept_id}: {problem.message}", err=True)
 
 
 def _parse_select_pairs(raw_pairs: tuple[str, ...]) -> list[tuple[str, str]]:
@@ -1869,7 +1943,7 @@ def migrate_db_cmd(
     Ordinary commands never change the schema of an existing okf-cache.db.
     When the file was written by an older okf-core, scan/graph/context run
     without the cache and report it under cache_problems, and
-    search/unlinked-mentions exit 2 asking for this command. Running it
+    search/similar/unlinked-mentions exit 2 asking for this command. Running it
     applies each pending version step inside one write transaction and
     stamps PRAGMA user_version; a missing or empty file is created at the
     current version, and a file already at the current version is left
