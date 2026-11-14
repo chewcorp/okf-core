@@ -216,7 +216,7 @@ def _similar_neighbours(
         WHERE concept_fts MATCH ? AND concept_id != ?
         ORDER BY rank, path
         """,
-        (query, concept.concept_id),
+        (f"{{title description body}} : ({query})", concept.concept_id),
     )
     neighbours = []
     for row in rows:
