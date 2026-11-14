@@ -193,6 +193,15 @@ def test_parse_entry_with_embedded_link_preserved_verbatim() -> None:
     )
 
 
+def test_parse_entry_with_autolink_inside_link() -> None:
+    parsed = parse_log("# Log\n\n## 2026-01-01\n\n* [<http://a>](u)\n")
+    assert len(parsed.sections[0].entries) == 1
+    entry = parsed.sections[0].entries[0]
+    assert entry.text == "[<http://a>](u)"
+    assert entry.label is None
+    assert parsed.problems == ()
+
+
 def test_parse_entry_with_multiple_links_preserved() -> None:
     content = "## 2026-05-15\n* See [A](a.md) and [B](b.md).\n"
     parsed = parse_log(content)

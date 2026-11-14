@@ -72,6 +72,8 @@ def _inline_children(src: str) -> list:
         ),
         (" - see [*em* text](target.md)", " - see [*em* text](target.md)"),
         (" - see [`code` text](target.md)", " - see [`code` text](target.md)"),
+        ("[<http://a>](u)", "[<http://a>](u)"),
+        ("[<http://a>](u) and [x](y)", "[<http://a>](u) and [x](y)"),
     ],
 )
 def test_render_span_round_trips(src: str, expected: str) -> None:
@@ -247,6 +249,14 @@ def test_link_inside_description_is_captured() -> None:
     assert parsed.sections[0].entries == (
         IndexEntry(title="A", link="a.md", description="see [B](b.md)"),
     )
+
+
+def test_autolink_inside_description_link_is_captured() -> None:
+    parsed = parse_index("# I\n\n* [x](y) - [<http://a>](u)\n")
+    assert parsed.sections[0].entries == (
+        IndexEntry(title="x", link="y", description="[<http://a>](u)"),
+    )
+    assert parsed.problems == ()
 
 
 def test_formatted_link_inside_description_round_trips() -> None:
