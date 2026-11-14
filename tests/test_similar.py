@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -100,7 +99,7 @@ def test_frontmatter_only_overlap_is_not_a_neighbour(tmp_path: Path) -> None:
         "---\ntype: concept\ntitle: Ocean\ncategory: retrieval\n---\nWaves",
         encoding="utf-8",
     )
-    bundle = replace(_bundle(tmp_path), listing_fields=("category",))
+    bundle = _bundle(tmp_path).model_copy(update={"listing_fields": ("category",)})
 
     assert find_similar_concepts(bundle, ["source"]).results[0].neighbours == ()
 

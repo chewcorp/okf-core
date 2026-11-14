@@ -179,20 +179,33 @@ def find_similar_concepts(
     with contextlib.closing(db.connect()) as conn:
         _prepare_search_index(conn, bundle, listing)
         for concept_id in concept_ids:
-            concept = concepts.get(concept_id)
-            if concept is None:
-                problems.append(
-                    ListingProblem(
-                        path=bundle.bundle_root,
-                        kind="unknown-concept",
-                        message=f"Unknown concept ID: {concept_id}",
-                        concept_id=concept_id,
-                    )
-                )
-                continue
-            neighbours = _similar_neighbours(conn, bundle, concept, linked)
-            results.append(SimilarConcept(concept_id, concept.path, neighbours))
+            result, problem = _similar_concept(
+                conn, bundle, concept_id, concepts, linked
+            )
+            if result is not None:
+                results.append(result)
+            if problem is not None:
+                problems.append(problem)
     return SimilarConceptsResult(tuple(results), tuple(problems))
+
+
+def _similar_concept(
+    conn: sqlite3.Connection,
+    bundle: BundleConfig,
+    concept_id: str,
+    concepts: Mapping[str, ConceptListing],
+    linked: set[tuple[str, str | None]],
+) -> tuple[SimilarConcept | None, ListingProblem | None]:
+    concept = concepts.get(concept_id)
+    if concept is None:
+        return None, ListingProblem(
+            path=bundle.bundle_root,
+            kind="unknown-concept",
+            message=f"Unknown concept ID: {concept_id}",
+            concept_id=concept_id,
+        )
+    neighbours = _similar_neighbours(conn, bundle, concept, linked)
+    return SimilarConcept(concept_id, concept.path, neighbours), None
 
 
 def _similar_neighbours(
