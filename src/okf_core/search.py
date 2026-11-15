@@ -11,7 +11,7 @@ from __future__ import annotations
 import contextlib
 import re
 import sqlite3
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -23,7 +23,13 @@ from okf_core.cache_db import (
     open_cache,
 )
 from okf_core.config import BundleConfig
-from okf_core.listing import BundleListing, ListingProblem, list_concepts
+from okf_core.graph import GraphProblem, build_bundle_graph
+from okf_core.listing import (
+    BundleListing,
+    ConceptListing,
+    ListingProblem,
+    list_concepts,
+)
 from okf_core.manifest import BundleManifest, scan_bundle
 
 
@@ -125,6 +131,120 @@ def search_concepts(
         results=tuple(_row_to_result(bundle, row) for row in rows),
         problems=problems,
     )
+
+
+@dataclass(frozen=True)
+class SimilarNeighbour:
+    """An unlinked lexical neighbour, with higher scores indicating closer matches."""
+
+    concept_id: str
+    path: Path
+    score: float
+
+
+@dataclass(frozen=True)
+class SimilarConcept:
+    """The nearest unlinked neighbours of one requested concept."""
+
+    concept_id: str
+    path: Path
+    neighbours: tuple[SimilarNeighbour, ...]
+
+
+@dataclass(frozen=True)
+class SimilarConceptsResult:
+    """Similarity results and non-fatal listing, graph, or unknown-ID problems."""
+
+    results: tuple[SimilarConcept, ...]
+    problems: tuple[ListingProblem | GraphProblem, ...]
+
+
+def find_similar_concepts(
+    bundle: BundleConfig, concept_ids: Sequence[str]
+) -> SimilarConceptsResult:
+    """Find up to three lexical neighbours per valid ID, excluding links either way.
+
+    Refreshes the shared FTS5 cache without modifying concept documents. Requires
+    bundle-level ``okf_cache_dir`` and raises ``SearchConfigError`` if unavailable.
+    Unknown IDs are reported in ``problems`` rather than raised.
+    """
+    db = _open_search_cache(bundle, "search")
+    manifest = scan_bundle(bundle)
+    listing = list_concepts(bundle, manifest=manifest, with_content=True)
+    graph = build_bundle_graph(bundle, manifest)
+    linked = {(link.source_concept_id, link.target_concept_id) for link in graph.links}
+    concepts = {concept.concept_id: concept for concept in listing.concepts}
+    problems: list[ListingProblem | GraphProblem] = [*listing.problems, *graph.problems]
+    results = []
+    with contextlib.closing(db.connect()) as conn:
+        _prepare_search_index(conn, bundle, listing)
+        for concept_id in concept_ids:
+            result, problem = _similar_concept(
+                conn, bundle, concept_id, concepts, linked
+            )
+            if result is not None:
+                results.append(result)
+            if problem is not None:
+                problems.append(problem)
+    return SimilarConceptsResult(tuple(results), tuple(problems))
+
+
+def _similar_concept(
+    conn: sqlite3.Connection,
+    bundle: BundleConfig,
+    concept_id: str,
+    concepts: Mapping[str, ConceptListing],
+    linked: set[tuple[str, str | None]],
+) -> tuple[SimilarConcept | None, ListingProblem | None]:
+    concept = concepts.get(concept_id)
+    if concept is None:
+        return None, ListingProblem(
+            path=bundle.bundle_root,
+            kind="unknown-concept",
+            message=f"Unknown concept ID: {concept_id}",
+            concept_id=concept_id,
+        )
+    neighbours = _similar_neighbours(conn, bundle, concept, linked)
+    return SimilarConcept(concept_id, concept.path, neighbours), None
+
+
+def _similar_neighbours(
+    conn: sqlite3.Connection,
+    bundle: BundleConfig,
+    concept: ConceptListing,
+    linked: set[tuple[str, str | None]],
+) -> tuple[SimilarNeighbour, ...]:
+    text = "\n".join(
+        (concept.title or "", concept.description or "", concept.content or "")
+    )
+    terms = sorted(set(re.findall(r"\w+", text, re.UNICODE)))
+    if not terms:
+        return ()
+    query = " OR ".join('"' + term.replace('"', '""') + '"' for term in terms)
+    rows = conn.execute(
+        """
+        SELECT concept_id, path,
+               bm25(concept_fts, 0, 0, 10.0, 5.0, 0, 1.0) AS rank
+        FROM concept_fts
+        WHERE concept_fts MATCH ? AND concept_id != ?
+        ORDER BY rank, path
+        """,
+        (f"{{title description body}} : ({query})", concept.concept_id),
+    )
+    neighbours = []
+    for row in rows:
+        other_id, path, rank = row
+        if (concept.concept_id, other_id) in linked or (
+            other_id,
+            concept.concept_id,
+        ) in linked:
+            continue
+        neighbours.append(
+            SimilarNeighbour(other_id, bundle.bundle_root / path, -float(rank))
+        )
+        if len(neighbours) == 3:
+            break
+    return tuple(neighbours)
 
 
 def _open_search_cache(bundle: BundleConfig, feature: str) -> CacheDatabase:

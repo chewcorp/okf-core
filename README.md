@@ -215,6 +215,18 @@ Each result includes `concept_id`, `path`, `title`, `description`, `score`, and 
 
 Missing `okf_cache_dir`, config errors, unknown bundles, and invalid limits exit `2`. So does a cache database that cannot be opened, or whose schema is not current: a cache written by an older `okf-core` exits `2` with `cache schema version 0 requires migration to 1; run okf migrate-db` (see [`okf migrate-db`](#okf-migrate-db)), and one written by a newer `okf-core` exits `2` asking you to upgrade. Unlike `scan` or `graph`, search cannot run without the cache, so it fails rather than reporting `cache_problems`.
 
+### `okf similar`
+
+```sh
+okf similar CONCEPT_ID... [--config PATH] [--bundle NAME] [--json]
+```
+
+Shows up to three lexical neighbours per named concept, excluding resolved links in either direction. Ranking uses weighted FTS5 matches across title, description, and body; higher scores are closer, with path breaking ties. This finds shared vocabulary, not semantic similarity without word overlap. It never edits notes, but requires bundle-level `okf_cache_dir` and refreshes the shared `concept_fts` cache once per invocation.
+
+Unlike the default JSON output of most commands, this command prints each concept followed by indented `path  score` lines; `--json` emits `bundle`, `results` (each with `concept` and `neighbours` containing bundle-relative `path`, `score`, and `concept_id`), and `problems`. Text-mode problems go to stderr. Unknown IDs and non-fatal listing/graph problems exit `0`; cache/configuration errors exit `2`, as with `okf search`.
+
+The library equivalent is `find_similar_concepts(bundle, concept_ids)`, returning a frozen `SimilarConceptsResult` with `results` and `problems`. Each result has `concept_id`, `path`, and `neighbours`; each neighbour has `concept_id`, `path`, and `score`. Library paths are absolute. Unknown IDs are problems, while unavailable cache configuration raises `SearchConfigError`.
+
 ### `okf unlinked-mentions`
 
 Finds visible concept-title mentions that are not already Markdown links, and optionally writes selected suggestions back into their source concept as inline Markdown links:
