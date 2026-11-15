@@ -286,10 +286,10 @@ The project uses `CHANGELOG.md` at the repo root following the [Keep a Changelog
   ```
   This parses the workflow matrix from `.github/workflows/test.yml` and spins up containerized pytest checks to detect version incompatibilities before raising a pull request.
 
-<!-- minime-cook-block v1 (source: chewcorp/minime-coder docs/cook-block.md; copy verbatim) -->
+<!-- minime-cook-block v2 (source: chewcorp/minime-coder docs/cook-block.md; copy verbatim) -->
 ## Cook rules
 
-- Post your plan, then keep building in the same session. Do not wait for a "go".
+- Post your plan, then keep building in the same session. Do not wait for a "go". Exception: where this repo's AGENTS.md or plan skill requires human sign-off for a change's tier, wait for that sign-off on that change only.
 - If something blocks you, comment on the PR (or the Linear card if there is no PR yet). Say what blocks you, the options, and which one you recommend. Then carry on with every part that is not blocked. Never end a session on a question you only asked yourself.
 - Answer every review finding on the GitHub PR, as a reply in its thread. Linear gets one line at most.
 - Resolve a thread only when you fixed what it raised. To decline, reply with the reason and leave the thread unresolved.
