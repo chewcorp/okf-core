@@ -214,8 +214,8 @@ def render_span(children: Sequence[Token]) -> str:
     child still gets escaped exactly as ``text_children`` would, since its
     ``.content`` is the same parser-recovered literal value). ``title`` is
     escaped via ``_link_title_attr``, the same helper ``link_children``
-    uses, so the backslash pre-escape rule lives in one place; nested links
-    are not supported (CommonMark itself forbids them). Used by
+    uses, so the backslash pre-escape rule lives in one place; nested link
+    tokens (such as autolinks inside link text) pass through intact. Used by
     ``index.py``'s entry-title/description extraction and ``logs.py``'s
     entry-prose extraction (``parse_index``/``parse_log``) -- every
     reconstitution of already-parsed content in the codebase shares this
@@ -233,7 +233,12 @@ def render_span(children: Sequence[Token]) -> str:
             title = title_attr if isinstance(title_attr, str) else None
             i += 1
             inner_tokens: list[Token] = []
-            while i < n and children[i].type != "link_close":
+            depth = 1
+            while i < n:
+                if children[i].type in {"link_open", "link_close"}:
+                    depth += children[i].nesting
+                if depth == 0:
+                    break
                 inner_tokens.append(children[i])
                 i += 1
             attrs: dict[str, Any] = {"href": href}
