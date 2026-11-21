@@ -860,6 +860,7 @@ def test_source_ref_forms_load(tmp_path: Path, ref: str) -> None:
         "./repos/team@work/release:2026.git",
         "workgit:repos/team@work/release:2026.git",
         "git@[2001:db8::1]:repo.git",
+        "git@code.example:repos/team[2026].git",
     ],
 )
 def test_source_git_urls_load(tmp_path: Path, url: str) -> None:

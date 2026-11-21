@@ -591,14 +591,13 @@ def _reject_malformed_scheme_url(value: str) -> None:
 
 def _reject_malformed_scp_url(value: str) -> None:
     # Git treats a colon after a slash as a local path, not scp syntax.
+    # A bracketed host puts "[" before that colon; a "[" later is path text.
     if _is_local_git_path(value):
         return
-    if "[" in value:
+    colon = value.find(":")
+    if "[" in value[:colon]:
         user, host, path = _split_bracket_scp(value)
     else:
-        colon = value.find(":")
-        if colon < 0:
-            return
         user, host = _split_scp_user(value[:colon])
         path = value[colon + 1 :]
     if _scp_parts_are_invalid(user, host, path):
