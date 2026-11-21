@@ -12,8 +12,8 @@ from okf_core import (
     scan_bundle,
     validate_bundle,
 )
-from okf_core.validation import _provenance_lifecycle_findings
 from okf_core.config import BundleConfig, OkfConfig
+from okf_core.validation import _provenance_lifecycle_findings
 
 
 def test_validate_bundle_identifies_all_problems(tmp_path: Path) -> None:
