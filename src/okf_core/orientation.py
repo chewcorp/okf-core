@@ -36,6 +36,8 @@ stable_id_field = "id"
 profile = "standard"
 ```
 
+A named bundle may also declare `[bundles.<name>.source]` (`url`, optional `ref`, optional `subpath`). `ref` is a branch, a tag, or a full 40-character commit SHA; omit it to mean the upstream default branch. Unknown source keys and an empty or whitespace-only `ref` fail closed. Loading the table does not fetch or pin. The README has the full rules.
+
 ## 3. Core Integration Commands
 To interact with or integrate a bundle, start with these essential commands:
 

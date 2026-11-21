@@ -6,7 +6,8 @@ try:
     import tomllib
 except ImportError:
     import tomli as tomllib  # type: ignore[no-redef]
-from pathlib import Path
+import re
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from pydantic import (
@@ -89,8 +90,53 @@ class ProjectDefaults(BaseModel):
         return res
 
 
+_FULL_COMMIT_SHA = re.compile(r"^[0-9a-fA-F]{40}$")
+_REF_FORBIDDEN = frozenset(" ~^:?*[\\")
+
+
+class BundleSource(BaseModel):
+    """Upstream a bundle is pulled from.
+
+    ``url`` is the git URL. ``ref`` is a branch name, a tag name, or a full
+    40-character commit SHA. Omit ``ref`` to mean the upstream's default
+    branch; that branch is not resolved here. ``subpath`` is an optional
+    relative path inside the upstream repository. An empty or whitespace-only
+    ``ref``, ``url``, or ``subpath`` is rejected. Loading this model does not
+    fetch or pin.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    url: str
+    ref: str | None = None
+    subpath: str | None = None
+
+    @field_validator("url")
+    @classmethod
+    def _validate_url(cls, value: str) -> str:
+        return _validate_source_url(value)
+
+    @field_validator("ref")
+    @classmethod
+    def _validate_ref(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _validate_source_ref(value)
+
+    @field_validator("subpath")
+    @classmethod
+    def _validate_subpath(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _validate_source_subpath(value)
+
+
 class BundleConfig(BaseModel):
-    """Resolved configuration for one OKF bundle."""
+    """Resolved configuration for one OKF bundle.
+
+    ``source`` is the optional ``[bundles.<name>.source]`` table. It is
+    bundle-level only and is never inherited from project defaults.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -106,6 +152,7 @@ class BundleConfig(BaseModel):
     directory_metadata_file: str = "_directory.yml"
     okf_cache_dir: Path | None = None
     stable_id_field: str | None = None
+    source: BundleSource | None = None
 
     @field_validator("stable_id_field")
     @classmethod
@@ -205,6 +252,7 @@ class _BundleInput(BaseModel):
     directory_metadata_file: str | None = None
     okf_cache_dir: Path | None = None
     stable_id_field: str | None = None
+    source: BundleSource | None = None
 
     @field_validator("okf_version")
     @classmethod
@@ -243,7 +291,12 @@ def load_config(
     project_root: str | Path | None = None,
     overrides: ConfigOverrides | dict[str, Any] | None = None,
 ) -> OkfConfig:
-    """Load and resolve OKF project configuration."""
+    """Load and resolve OKF project configuration.
+
+    A ``[bundles.<name>.source]`` table is validated and stored on that
+    bundle. Unknown source keys and invalid source values raise
+    ``ConfigError``. Loading does not fetch the upstream or pin a commit.
+    """
 
     explicit_config_path = Path(config_path) if config_path is not None else None
     resolved_config_path = _resolve_config_path(explicit_config_path, project_root)
@@ -386,6 +439,7 @@ def _resolve_bundles(
                     else None
                 ),
                 stable_id_field=overrides.stable_id_field,
+                source=None,
             )
         }
 
@@ -472,6 +526,7 @@ def _resolve_bundle(
             else None
         ),
         stable_id_field=stable_id_field,
+        source=raw_bundle.source,
     )
 
 
@@ -501,6 +556,70 @@ def _validate_optional_okf_version(version: str | None) -> str | None:
         return validate_supported_okf_version(version)
     except OkfVersionError as exc:
         raise ValueError(str(exc)) from exc
+
+
+def _validate_source_url(value: str) -> str:
+    stripped = value.strip()
+    if not stripped:
+        raise ValueError("url must not be empty or whitespace")
+    if any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in stripped):
+        raise ValueError(
+            "url must be a git URL without whitespace or control characters"
+        )
+    return stripped
+
+
+def _validate_source_ref(value: str) -> str:
+    stripped = value.strip()
+    if not stripped:
+        raise ValueError("ref must not be empty or whitespace")
+    if _FULL_COMMIT_SHA.fullmatch(stripped) or _is_branch_or_tag_name(stripped):
+        return stripped
+    raise ValueError(
+        "ref must be a branch name, a tag name, or a full 40-character commit SHA"
+    )
+
+
+def _is_branch_or_tag_name(name: str) -> bool:
+    if _ref_has_forbidden_form(name):
+        return False
+    return all(_is_ref_component(part) for part in name.split("/"))
+
+
+def _ref_has_forbidden_form(name: str) -> bool:
+    if name in {"@", "."} or name.startswith("/") or name.endswith(("/", ".")):
+        return True
+    if "//" in name or ".." in name or "@{" in name:
+        return True
+    return any(_is_forbidden_ref_char(char) for char in name)
+
+
+def _is_forbidden_ref_char(char: str) -> bool:
+    return ord(char) < 32 or ord(char) == 127 or char in _REF_FORBIDDEN
+
+
+def _is_ref_component(part: str) -> bool:
+    return bool(part) and not part.startswith(".") and not part.endswith(".lock")
+
+
+def _validate_source_subpath(value: str) -> str:
+    stripped = value.strip()
+    if not stripped:
+        raise ValueError("subpath must not be empty or whitespace")
+    if _subpath_is_unsafe(stripped):
+        raise ValueError(
+            "subpath must be a relative path inside the upstream repository"
+        )
+    return stripped
+
+
+def _subpath_is_unsafe(value: str) -> bool:
+    if "\\" in value or any(ord(char) < 32 or ord(char) == 127 for char in value):
+        return True
+    path = PurePosixPath(value)
+    # A lone "." collapses to no parts; that is the repository root, which is
+    # expressed by omitting subpath.
+    return path.is_absolute() or not path.parts or ".." in path.parts
 
 
 def _validate_metadata_filename(v: str | None) -> str | None:

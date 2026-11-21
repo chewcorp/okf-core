@@ -2653,6 +2653,7 @@ def test_list_bundles_help_exits_zero() -> None:
     result = _runner().invoke(cli, ["list-bundles", "--help"])
     assert result.exit_code == 0
     assert "--config" in result.stdout
+    assert "source" in _collapsed_help_text(result.stdout)
 
 
 def test_list_bundles_emits_json_with_default_bundle(tmp_path: Path) -> None:
@@ -2673,6 +2674,7 @@ def test_list_bundles_emits_json_with_default_bundle(tmp_path: Path) -> None:
     assert bundle["bundle_root"] == str(tmp_path)
     assert bundle["profile"] is None
     assert bundle["okf_version"] == "0.1"
+    assert bundle["source"] is None
 
 
 def test_list_bundles_emits_all_named_bundles(tmp_path: Path) -> None:
@@ -2693,6 +2695,8 @@ def test_list_bundles_emits_all_named_bundles(tmp_path: Path) -> None:
     # bundles are sorted by name regardless of TOML definition order
     assert [b["name"] for b in data["bundles"]] == ["alpha", "beta"]
     assert data["bundles"][1]["profile"] == "default"
+    assert data["bundles"][0]["source"] is None
+    assert data["bundles"][1]["source"] is None
 
 
 def test_list_bundles_missing_config_file_exits_2(tmp_path: Path) -> None:
@@ -2715,6 +2719,107 @@ def test_list_bundles_stderr_summary_reports_count(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     assert "Found 2 bundle(s)" in result.stderr
+
+
+_SHA = "0123456789abcdef0123456789abcdef01234567"
+
+
+def test_list_bundles_emits_source(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        """
+[bundles.episodic]
+bundle_root = "memory/episodic"
+
+[bundles.gold]
+bundle_root = "memory/gold"
+
+[bundles.gold.source]
+url = "https://github.com/example/gold.git"
+ref = "0123456789abcdef0123456789abcdef01234567"
+subpath = "bundles/gold"
+""".strip() + "\n",
+        encoding="utf-8",
+    )
+
+    result = _runner().invoke(cli, ["list-bundles", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    by_name = {bundle["name"]: bundle for bundle in data["bundles"]}
+    assert by_name["episodic"]["source"] is None
+    assert by_name["gold"]["source"] == {
+        "url": "https://github.com/example/gold.git",
+        "ref": _SHA,
+        "subpath": "bundles/gold",
+    }
+
+
+def test_list_bundles_omitted_ref_is_null(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        """
+[bundles.gold.source]
+url = "git@github.com:example/gold.git"
+""".strip() + "\n",
+        encoding="utf-8",
+    )
+
+    result = _runner().invoke(cli, ["list-bundles", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["bundles"][0]["source"] == {
+        "url": "git@github.com:example/gold.git",
+        "ref": None,
+        "subpath": None,
+    }
+
+
+@pytest.mark.parametrize(
+    ("toml", "message"),
+    [
+        (
+            (
+                "[bundles.gold.source]\n"
+                "url = 'https://github.com/example/gold.git'\n"
+                "unknown = true\n"
+            ),
+            "Extra inputs are not permitted",
+        ),
+        (
+            "[bundles.gold.source]\nref = 'main'\n",
+            "Field required",
+        ),
+        (
+            (
+                "[bundles.gold.source]\n"
+                "url = 'https://github.com/example/gold.git'\n"
+                "ref = ''\n"
+            ),
+            "ref must not be empty or whitespace",
+        ),
+        (
+            (
+                "[bundles.gold.source]\n"
+                "url = 'https://github.com/example/gold.git'\n"
+                'ref = "   "\n'
+            ),
+            "ref must not be empty or whitespace",
+        ),
+    ],
+)
+def test_list_bundles_source_errors_exit_2(
+    tmp_path: Path, toml: str, message: str
+) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(toml, encoding="utf-8")
+
+    result = _runner().invoke(cli, ["list-bundles", "--config", str(config_path)])
+
+    assert result.exit_code == 2
+    assert "Configuration error" in result.stderr
+    assert message in result.stderr
 
 
 def test_version_option() -> None:
@@ -4699,3 +4804,5 @@ def test_cli_orient_prints_guidance() -> None:
     assert "not wiki notes" in result.stdout
     assert "okf graph-report --help" in result.stdout
     assert "okf migrate-db --help" in result.stdout
+    assert "[bundles.<name>.source]" in result.stdout
+    assert "does not fetch or pin" in result.stdout

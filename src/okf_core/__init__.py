@@ -23,6 +23,7 @@ from okf_core.cache_db import (
 )
 from okf_core.config import (
     BundleConfig,
+    BundleSource,
     ConfigError,
     ConfigOverrides,
     OkfConfig,
@@ -227,6 +228,7 @@ __all__ = [
     "BundleListing",
     "BundleManifest",
     "BundleSearchResults",
+    "BundleSource",
     "BundleWriteSafetyProblem",
     "CacheDatabase",
     "CacheMigrationError",
