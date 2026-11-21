@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -7,6 +8,7 @@ from typing import Any
 import pytest
 
 from okf_core import (
+    BundleSource,
     ConfigError,
     ConfigOverrides,
     discover_config,
@@ -30,6 +32,8 @@ def test_absent_config_uses_built_in_defaults(tmp_path: Path) -> None:
     assert config.bundles["default"].okf_version is None
     assert config.bundles["default"].bundle_root == tmp_path
     assert config.bundles["default"].directory_metadata_file == "_directory.yml"
+    assert not hasattr(config.defaults, "source")
+    assert config.bundles["default"].source is None
 
 
 def test_absent_config_with_existing_file_project_root_uses_parent(
@@ -478,6 +482,11 @@ listing_fields = []
         "[bundles.docs]\nunexpected = true",
         "[defaults]\nindex_cache = '.okf-cache'",
         "[bundles.docs]\nbundle_root = 'docs'\nindex_cache = '.okf-cache'",
+        (
+            "[bundles.docs.source]\n"
+            "url = 'https://github.com/example/gold.git'\n"
+            "unknown = true"
+        ),
     ],
 )
 def test_unknown_keys_fail_closed(tmp_path: Path, toml: str) -> None:
@@ -759,3 +768,315 @@ def test_stable_id_field_configuration(tmp_path: Path) -> None:
         config_path=config_path, overrides={"stable_id_field": "overridden-id"}
     )
     assert config.bundles["b1"].stable_id_field == "overridden-id"
+
+
+_SHA = "0123456789abcdef0123456789abcdef01234567"
+_GOLD_URL = "https://github.com/example/gold.git"
+
+
+def _write_toml(tmp_path: Path, toml: str) -> Path:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(toml.strip() + "\n", encoding="utf-8")
+    return config_path
+
+
+def test_load_config_reads_local_and_sourced_bundles(tmp_path: Path) -> None:
+    config_path = _write_toml(
+        tmp_path,
+        """
+        [bundles.episodic]
+        bundle_root = "memory/episodic"
+
+        [bundles.gold]
+        bundle_root = "memory/gold"
+
+        [bundles.gold.source]
+        url = "https://github.com/example/gold.git"
+        ref = "main"
+        subpath = "bundles/gold"
+        """,
+    )
+
+    config = load_config(config_path=config_path)
+
+    assert config.bundles["episodic"].source is None
+    assert config.bundles["episodic"].bundle_root == tmp_path / "memory" / "episodic"
+    assert config.bundles["gold"].bundle_root == tmp_path / "memory" / "gold"
+    assert config.bundles["gold"].source == BundleSource(
+        url=_GOLD_URL,
+        ref="main",
+        subpath="bundles/gold",
+    )
+
+
+def test_omitted_source_ref_stays_unresolved(tmp_path: Path) -> None:
+    config_path = _write_toml(
+        tmp_path,
+        """
+        [bundles.gold.source]
+        url = "https://github.com/example/gold.git"
+        subpath = "bundles/gold"
+        """,
+    )
+
+    source = load_config(config_path=config_path).bundles["gold"].source
+
+    assert source == BundleSource(url=_GOLD_URL, ref=None, subpath="bundles/gold")
+
+
+@pytest.mark.parametrize(
+    "ref",
+    [
+        "main",
+        "feature/add-source",
+        "v1.2.3",
+        _SHA,
+        "0123456789ABCDEF0123456789ABCDEF01234567",
+    ],
+)
+def test_source_ref_forms_load(tmp_path: Path, ref: str) -> None:
+    config_path = _write_toml(
+        tmp_path,
+        f"""
+        [bundles.gold.source]
+        url = "{_GOLD_URL}"
+        ref = "{ref}"
+        """,
+    )
+
+    source = load_config(config_path=config_path).bundles["gold"].source
+
+    assert source == BundleSource(url=_GOLD_URL, ref=ref, subpath=None)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com/example/gold.git",
+        "git@github.com:example/gold.git",
+        "ssh://git@github.com/example/gold.git",
+        "file:///tmp/gold.git",
+        "file://localhost/tmp/gold.git",
+        "./repos/team@work/release:2026.git",
+        "workgit:repos/team@work/release:2026.git",
+        "git@[2001:db8::1]:repo.git",
+        "git@code.example:repos/team[2026].git",
+    ],
+)
+def test_source_git_urls_load(tmp_path: Path, url: str) -> None:
+    config_path = _write_toml(
+        tmp_path,
+        f"""
+        [bundles.gold.source]
+        url = "{url}"
+        """,
+    )
+
+    source = load_config(config_path=config_path).bundles["gold"].source
+
+    assert source == BundleSource(url=url, ref=None, subpath=None)
+
+
+def test_source_strips_surrounding_whitespace(tmp_path: Path) -> None:
+    config_path = _write_toml(
+        tmp_path,
+        f"""
+        [bundles.gold.source]
+        url = "  {_GOLD_URL}  "
+        ref = "  main  "
+        subpath = "  bundles/gold  "
+        """,
+    )
+
+    source = load_config(config_path=config_path).bundles["gold"].source
+
+    assert source == BundleSource(url=_GOLD_URL, ref="main", subpath="bundles/gold")
+
+
+def test_source_missing_url_fails_closed(tmp_path: Path) -> None:
+    config_path = _write_toml(
+        tmp_path,
+        """
+        [bundles.gold.source]
+        ref = "main"
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="url") as exc_info:
+        load_config(config_path=config_path)
+
+    assert "Field required" in str(exc_info.value)
+
+
+def test_unknown_source_key_is_named(tmp_path: Path) -> None:
+    config_path = _write_toml(
+        tmp_path,
+        f"""
+        [bundles.gold.source]
+        url = "{_GOLD_URL}"
+        not-a-source-key = true
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="not-a-source-key") as exc_info:
+        load_config(config_path=config_path)
+
+    assert "Extra inputs are not permitted" in str(exc_info.value)
+
+
+def test_source_table_rejected_on_defaults(tmp_path: Path) -> None:
+    config_path = _write_toml(
+        tmp_path,
+        f"""
+        [defaults.source]
+        url = "{_GOLD_URL}"
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="defaults.source"):
+        load_config(config_path=config_path)
+
+
+def test_source_override_is_rejected() -> None:
+    with pytest.raises(ConfigError, match="source"):
+        load_config(overrides={"source": {"url": _GOLD_URL}})
+
+
+@pytest.mark.parametrize("ref", ["", " ", "\t", " \t "])
+def test_source_ref_rejects_empty_or_whitespace(tmp_path: Path, ref: str) -> None:
+    config_path = _write_toml(
+        tmp_path,
+        f"""
+        [bundles.gold.source]
+        url = "{_GOLD_URL}"
+        ref = {json.dumps(ref)}
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="ref must not be empty or whitespace"):
+        load_config(config_path=config_path)
+
+
+@pytest.mark.parametrize(
+    "ref",
+    [
+        "-main",
+        "HEAD~1",
+        "name with space",
+        "@",
+        "..",
+        ".hidden",
+        "foo.lock",
+        "bad:ref",
+        "a//b",
+    ],
+)
+def test_source_ref_rejects_non_ref(tmp_path: Path, ref: str) -> None:
+    config_path = _write_toml(
+        tmp_path,
+        f"""
+        [bundles.gold.source]
+        url = "{_GOLD_URL}"
+        ref = {json.dumps(ref)}
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="full 40-character commit SHA"):
+        load_config(config_path=config_path)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "",
+        "   ",
+        "https://example.com/repo.git extra",
+        "https://",
+        "https:///repo.git",
+        "ssh://",
+        "file://",
+        "file:///",
+        "git@:repo.git",
+        "@github.com:example/gold.git",
+        "git@[2001:db8::1]:",
+        "git@[]:repo.git",
+    ],
+)
+def test_source_url_rejects_bad_values(tmp_path: Path, url: str) -> None:
+    config_path = _write_toml(
+        tmp_path,
+        f"""
+        [bundles.gold.source]
+        url = {url!r}
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="url must"):
+        load_config(config_path=config_path)
+
+
+@pytest.mark.parametrize(
+    "subpath",
+    [
+        "",
+        "   ",
+        "/abs",
+        "../escape",
+        "foo/../../etc",
+        ".",
+        "foo\\bar",
+        "foo\nbar",
+        "C:/docs",
+        "c:docs",
+    ],
+)
+def test_source_subpath_rejects_bad_values(tmp_path: Path, subpath: str) -> None:
+    config_path = _write_toml(
+        tmp_path,
+        f"""
+        [bundles.gold.source]
+        url = "{_GOLD_URL}"
+        subpath = {json.dumps(subpath)}
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="subpath must"):
+        load_config(config_path=config_path)
+
+
+@pytest.mark.parametrize(
+    ("toml", "message"),
+    [
+        (
+            """
+            [bundles.gold.source]
+            url = ["https://github.com/example/gold.git"]
+            """,
+            "url",
+        ),
+        (
+            """
+            [bundles.gold.source]
+            url = "https://github.com/example/gold.git"
+            ref = 1
+            """,
+            "ref",
+        ),
+        (
+            """
+            [bundles.gold]
+            source = "https://github.com/example/gold.git"
+            """,
+            "source",
+        ),
+    ],
+)
+def test_source_wrong_types_fail_closed(
+    tmp_path: Path, toml: str, message: str
+) -> None:
+    config_path = _write_toml(tmp_path, toml)
+
+    with pytest.raises(ConfigError, match="Invalid OKF configuration") as exc_info:
+        load_config(config_path=config_path)
+
+    assert message in str(exc_info.value)

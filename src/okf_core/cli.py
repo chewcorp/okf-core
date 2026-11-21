@@ -2037,7 +2037,12 @@ def _migrate_db_summary(
     help="Path to okf-core.toml (default: search upward from cwd).",
 )
 def list_bundles_cmd(config_path: str | None) -> None:
-    """List all configured bundles."""
+    """List all configured bundles.
+
+    Each entry includes name, bundle_root, profile, okf_version, and source.
+    source is null when the bundle has no source table. Otherwise it is an
+    object with url, ref, and subpath; ref and subpath are null when omitted.
+    """
     try:
         cfg = load_config(config_path=config_path)
     except ConfigError as exc:
@@ -2050,6 +2055,7 @@ def list_bundles_cmd(config_path: str | None) -> None:
             "bundle_root": str(bundle.bundle_root),
             "profile": bundle.profile,
             "okf_version": bundle.okf_version,
+            "source": _source_listing(bundle),
         }
         for bundle in sorted(cfg.bundles.values(), key=lambda b: b.name)
     ]
@@ -2059,6 +2065,15 @@ def list_bundles_cmd(config_path: str | None) -> None:
     }
     click.echo(json.dumps(result, cls=_Encoder, indent=2))
     click.echo(f"Found {len(bundles)} bundle(s)", err=True)
+
+
+def _source_listing(bundle: BundleConfig) -> dict[str, str | None] | None:
+    """JSON ``source`` object for one bundle, or ``None`` when unsourced."""
+
+    source = bundle.source
+    if source is None:
+        return None
+    return {"url": source.url, "ref": source.ref, "subpath": source.subpath}
 
 
 @cli.command("orient")

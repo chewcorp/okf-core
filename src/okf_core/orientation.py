@@ -36,6 +36,8 @@ stable_id_field = "id"
 profile = "standard"
 ```
 
+A named bundle may declare an upstream with `[bundles.<name>.source]`. See README.md for the keys and rules. Loading the table does not fetch or pin.
+
 ## 3. Core Integration Commands
 To interact with or integrate a bundle, start with these essential commands:
 
