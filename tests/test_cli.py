@@ -2807,6 +2807,10 @@ url = "git@github.com:example/gold.git"
             ),
             "ref must not be empty or whitespace",
         ),
+        (
+            "[bundles.gold.source]\nurl = 'https://'\n",
+            "must include a host",
+        ),
     ],
 )
 def test_list_bundles_source_errors_exit_2(

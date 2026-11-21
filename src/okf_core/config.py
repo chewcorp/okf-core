@@ -9,6 +9,7 @@ except ImportError:
 import re
 from pathlib import Path, PurePosixPath
 from typing import Any
+from urllib.parse import urlsplit
 
 from pydantic import (
     BaseModel,
@@ -101,7 +102,8 @@ class BundleSource(BaseModel):
     40-character commit SHA. Omit ``ref`` to mean the upstream's default
     branch; that branch is not resolved here. ``subpath`` is an optional
     relative path inside the upstream repository. An empty or whitespace-only
-    ``ref``, ``url``, or ``subpath`` is rejected. Loading this model does not
+    ``ref``, ``url``, or ``subpath`` is rejected, as is a scheme URL with no
+    host (``file://`` must name a path instead). Loading this model does not
     fetch or pin.
     """
 
@@ -566,7 +568,38 @@ def _validate_source_url(value: str) -> str:
         raise ValueError(
             "url must be a git URL without whitespace or control characters"
         )
+    _reject_malformed_git_url(stripped)
     return stripped
+
+
+def _reject_malformed_git_url(value: str) -> None:
+    if "://" in value:
+        _reject_malformed_scheme_url(value)
+        return
+    if _is_scp_shaped(value):
+        _reject_malformed_scp_url(value)
+
+
+def _is_scp_shaped(value: str) -> bool:
+    _, separator, rest = value.partition("@")
+    return bool(separator) and ":" in rest
+
+
+def _reject_malformed_scheme_url(value: str) -> None:
+    parts = urlsplit(value)
+    if parts.scheme.lower() == "file":
+        if parts.path in {"", "/"}:
+            raise ValueError("url must be a file URL with a path")
+        return
+    if not parts.hostname:
+        raise ValueError("url must include a host")
+
+
+def _reject_malformed_scp_url(value: str) -> None:
+    user, _, rest = value.partition("@")
+    host, separator, path = rest.partition(":")
+    if not user or "/" in user or not separator or not host or "/" in host or not path:
+        raise ValueError("url must be an scp-style git location with a host and a path")
 
 
 def _validate_source_ref(value: str) -> str:
@@ -616,10 +649,17 @@ def _validate_source_subpath(value: str) -> str:
 def _subpath_is_unsafe(value: str) -> bool:
     if "\\" in value or any(ord(char) < 32 or ord(char) == 127 for char in value):
         return True
+    if _has_drive_prefix(value):
+        return True
     path = PurePosixPath(value)
     # A lone "." collapses to no parts; that is the repository root, which is
     # expressed by omitting subpath.
     return path.is_absolute() or not path.parts or ".." in path.parts
+
+
+def _has_drive_prefix(value: str) -> bool:
+    head = value.split("/", 1)[0]
+    return len(head) >= 2 and head[0].isalpha() and head[1] == ":"
 
 
 def _validate_metadata_filename(v: str | None) -> str | None:

@@ -138,9 +138,9 @@ subpath = "bundles/gold"
 
 Keys:
 
-- `url` (required): git URL of the upstream repository, including `https://` URLs and scp-like URLs such as `git@host:org/repo.git`. An empty or whitespace-only value is rejected, as is a value that contains whitespace or control characters. Surrounding whitespace is stripped.
+- `url` (required): git URL of the upstream repository, including `https://` URLs and scp-like URLs such as `git@host:org/repo.git`. An empty or whitespace-only value is rejected, as is a value that contains whitespace or control characters. A `scheme://` URL other than `file://` must include a host, so `https://` is rejected. `file://` must include a path. An scp-style `user@host:path` URL must include a host and a path. Surrounding whitespace is stripped. No network check is made.
 - `ref` (optional): a branch name, a tag name, or a full 40-character commit SHA. Omit `ref` to mean the upstream's default branch. That default is not looked up while loading config, so an omitted `ref` stays unset until a later pull. A `ref` that is present but empty or whitespace-only is a configuration error. A value that is not a branch name, a tag name, or a 40-character SHA — for example `HEAD~1`, or a name containing spaces — is also rejected. Only the full 40-character hex form counts as a commit; a shorter hash is not treated as one. Surrounding whitespace on an otherwise valid `ref` is stripped.
-- `subpath` (optional): relative path inside the upstream repository. Omit it to use the repository root. An empty or whitespace-only value, a lone `.`, an absolute path, a path containing `..`, or a backslash is rejected.
+- `subpath` (optional): POSIX relative path inside the upstream repository. Omit it to use the repository root. An empty or whitespace-only value, a lone `.`, an absolute path, a drive-letter path such as `C:/docs`, a path containing `..`, or a backslash is rejected.
 
 Unknown keys under `[bundles.<name>.source]`, a missing `url`, and any other invalid source value fail closed with `ConfigError`. Commands that load config, including `okf list-bundles`, report that as a configuration error and exit `2`.
 

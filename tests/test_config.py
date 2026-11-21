@@ -856,6 +856,7 @@ def test_source_ref_forms_load(tmp_path: Path, ref: str) -> None:
         "git@github.com:example/gold.git",
         "ssh://git@github.com/example/gold.git",
         "file:///tmp/gold.git",
+        "file://localhost/tmp/gold.git",
     ],
 )
 def test_source_git_urls_load(tmp_path: Path, url: str) -> None:
@@ -970,7 +971,21 @@ def test_source_ref_rejects_non_ref(tmp_path: Path, ref: str) -> None:
         load_config(config_path=config_path)
 
 
-@pytest.mark.parametrize("url", ["", "   ", "https://example.com/repo.git extra"])
+@pytest.mark.parametrize(
+    "url",
+    [
+        "",
+        "   ",
+        "https://example.com/repo.git extra",
+        "https://",
+        "https:///repo.git",
+        "ssh://",
+        "file://",
+        "file:///",
+        "git@:repo.git",
+        "@github.com:example/gold.git",
+    ],
+)
 def test_source_url_rejects_bad_values(tmp_path: Path, url: str) -> None:
     config_path = _write_toml(
         tmp_path,
@@ -986,7 +1001,18 @@ def test_source_url_rejects_bad_values(tmp_path: Path, url: str) -> None:
 
 @pytest.mark.parametrize(
     "subpath",
-    ["", "   ", "/abs", "../escape", "foo/../../etc", ".", "foo\\bar", "foo\nbar"],
+    [
+        "",
+        "   ",
+        "/abs",
+        "../escape",
+        "foo/../../etc",
+        ".",
+        "foo\\bar",
+        "foo\nbar",
+        "C:/docs",
+        "c:docs",
+    ],
 )
 def test_source_subpath_rejects_bad_values(tmp_path: Path, subpath: str) -> None:
     config_path = _write_toml(
