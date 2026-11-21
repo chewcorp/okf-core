@@ -576,13 +576,7 @@ def _reject_malformed_git_url(value: str) -> None:
     if "://" in value:
         _reject_malformed_scheme_url(value)
         return
-    if _is_scp_shaped(value):
-        _reject_malformed_scp_url(value)
-
-
-def _is_scp_shaped(value: str) -> bool:
-    _, separator, rest = value.partition("@")
-    return bool(separator) and ":" in rest
+    _reject_malformed_scp_url(value)
 
 
 def _reject_malformed_scheme_url(value: str) -> None:
@@ -596,10 +590,59 @@ def _reject_malformed_scheme_url(value: str) -> None:
 
 
 def _reject_malformed_scp_url(value: str) -> None:
-    user, _, rest = value.partition("@")
-    host, separator, path = rest.partition(":")
-    if not user or "/" in user or not separator or not host or "/" in host or not path:
+    # Git treats a colon after a slash as a local path, not scp syntax.
+    if _is_local_git_path(value):
+        return
+    if "[" in value:
+        user, host, path = _split_bracket_scp(value)
+    else:
+        colon = value.find(":")
+        if colon < 0:
+            return
+        user, host = _split_scp_user(value[:colon])
+        path = value[colon + 1 :]
+    if _scp_parts_are_invalid(user, host, path):
         raise ValueError("url must be an scp-style git location with a host and a path")
+
+
+def _is_local_git_path(value: str) -> bool:
+    if _has_drive_prefix(value):
+        return True
+    slash = value.find("/")
+    colon = value.find(":")
+    return colon < 0 or (slash >= 0 and slash < colon)
+
+
+def _split_scp_user(authority: str) -> tuple[str | None, str]:
+    if "@" not in authority:
+        return None, authority
+    user, _, host = authority.partition("@")
+    return user, host
+
+
+def _split_bracket_scp(value: str) -> tuple[str | None, str, str]:
+    open_bracket = value.find("[")
+    close_bracket = value.find("]", open_bracket + 1)
+    if close_bracket < 0:
+        return None, "", ""
+    host = value[open_bracket + 1 : close_bracket]
+    rest = value[close_bracket + 1 :]
+    path = rest[1:] if rest.startswith(":") else ""
+    return _user_before_bracket(value[:open_bracket]), host, path
+
+
+def _user_before_bracket(prefix: str) -> str | None:
+    if not prefix:
+        return None
+    if prefix.endswith("@"):
+        return prefix[:-1]
+    return ""
+
+
+def _scp_parts_are_invalid(user: str | None, host: str, path: str) -> bool:
+    if user is not None and (not user or "/" in user):
+        return True
+    return not host or "/" in host or not path
 
 
 def _validate_source_ref(value: str) -> str:

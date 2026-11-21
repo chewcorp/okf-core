@@ -857,6 +857,9 @@ def test_source_ref_forms_load(tmp_path: Path, ref: str) -> None:
         "ssh://git@github.com/example/gold.git",
         "file:///tmp/gold.git",
         "file://localhost/tmp/gold.git",
+        "./repos/team@work/release:2026.git",
+        "workgit:repos/team@work/release:2026.git",
+        "git@[2001:db8::1]:repo.git",
     ],
 )
 def test_source_git_urls_load(tmp_path: Path, url: str) -> None:
@@ -984,6 +987,8 @@ def test_source_ref_rejects_non_ref(tmp_path: Path, ref: str) -> None:
         "file:///",
         "git@:repo.git",
         "@github.com:example/gold.git",
+        "git@[2001:db8::1]:",
+        "git@[]:repo.git",
     ],
 )
 def test_source_url_rejects_bad_values(tmp_path: Path, url: str) -> None:
