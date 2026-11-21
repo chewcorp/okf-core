@@ -662,7 +662,7 @@ def _is_branch_or_tag_name(name: str) -> bool:
 
 
 def _ref_has_forbidden_form(name: str) -> bool:
-    if name in {"@", "."} or name.startswith("/") or name.endswith(("/", ".")):
+    if name.startswith(("-", "/")) or name in {"@", "."} or name.endswith(("/", ".")):
         return True
     if "//" in name or ".." in name or "@{" in name:
         return True

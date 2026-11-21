@@ -959,7 +959,17 @@ def test_source_ref_rejects_empty_or_whitespace(tmp_path: Path, ref: str) -> Non
 
 @pytest.mark.parametrize(
     "ref",
-    ["HEAD~1", "name with space", "@", "..", ".hidden", "foo.lock", "bad:ref", "a//b"],
+    [
+        "-main",
+        "HEAD~1",
+        "name with space",
+        "@",
+        "..",
+        ".hidden",
+        "foo.lock",
+        "bad:ref",
+        "a//b",
+    ],
 )
 def test_source_ref_rejects_non_ref(tmp_path: Path, ref: str) -> None:
     config_path = _write_toml(
