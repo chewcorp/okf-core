@@ -8,7 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- **v0.2 provenance, trust, and lifecycle shape checks in `validate_bundle` / `okf validate`**: a present `sources`, `generated`, `verified`, `status`, or `stale_after` value is checked with the same validators as `source_upsert` and the `stamp-*` writes. Spec-shape violations are errors, including an offset-naive timestamp and an unknown `status`. A `generated` record that omits `at`, and a calendar-date `stale_after`, are warnings. Absent fields, extra keys, and source credibility signals are not findings. The attribution consistency check is unchanged. (#221)
+- **v0.2 provenance, trust, and lifecycle shape checks in `validate_bundle` / `okf validate`**: a present `sources`, `generated`, `verified`, `status`, or `stale_after` value is checked with the same validators as `source_upsert` and the `stamp-*` writes. Spec-shape violations are errors, including an offset-naive timestamp and an unknown `status`. The check parses the document rather than the scan's stringified frontmatter, so an unquoted YAML date does not pass a string field. A `generated` record that omits `at`, and a calendar-date `stale_after`, are warnings. Absent fields, extra keys, and source credibility signals are not findings. The attribution consistency check is unchanged. (#221)
 
 ## [0.6.0] - 2026-11-15
 

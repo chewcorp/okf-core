@@ -96,13 +96,13 @@ def validate_bundle(
         # not profile-specific, and is unchanged by the shape check: a
         # malformed sources value is a shape finding here, while a
         # well-formed but uncited sources[].id stays an attribution warning.
-        # Both reuse the scan's parsed frontmatter/body rather than
-        # re-reading the document.
+        # Shape checks re-parse the document. The scan freezes YAML dates to
+        # ISO strings, which would let a date pass a string check the
+        # source-upsert validator rejects. Attribution keeps using the
+        # scan's frontmatter and body.
         doc_findings = (
             tuple(doc_findings)
-            + _provenance_lifecycle_findings(
-                entry.path, entry.frontmatter, entry.content
-            )
+            + _provenance_lifecycle_findings(entry.path, entry.content)
             + check_attribution_consistency(entry.frontmatter, entry.body)
         )
 
@@ -138,7 +138,6 @@ _TOP_LEVEL_KEY = re.compile(r"^([A-Za-z_][\w-]*)\s*:")
 
 def _provenance_lifecycle_findings(
     path: Path,
-    frontmatter: Mapping[str, Any],
     content: str,
 ) -> tuple[ValidationFinding, ...]:
     """Check OKF v0.2 §5 provenance, trust, and lifecycle field shapes.
@@ -156,7 +155,8 @@ def _provenance_lifecycle_findings(
 
     * **Error** — a present value the reused validator rejects. ``sources``
       must be a list of mappings with a non-empty string ``resource`` and,
-      when ``id`` is present, a non-empty string ``id``. ``generated`` must
+      when ``id`` is present and not null, a non-empty string ``id``
+      (``id: null`` is omitted). ``generated`` must
       be a mapping whose ``by`` is an actor (§7) and whose ``at``, when
       present, is an offset-aware ISO 8601 datetime; an offset-naive
       timestamp is an error. ``verified`` must be a list of ``{by, at}``
@@ -170,11 +170,23 @@ def _provenance_lifecycle_findings(
 
     ``line`` is the 1-based line of the top-level key in ``content`` when
     that key is written at column 0 in the frontmatter block, else ``None``.
-    Scanned frontmatter freezes lists to tuples and timestamps to ISO
-    strings; those are thawed back into the shapes the validators accept
-    before checking, so a conformant document is not reported just because
-    it was scanned.
+    The check parses ``content`` itself. ``scan_bundle`` freezes YAML dates
+    and datetimes to ISO strings before publishing frontmatter, including
+    through the SQLite cache, and the string check would then accept a date
+    that ``source_upsert`` rejects. An explicit ``id: null`` stays legal:
+    the source-entry validator treats it as omitted.
     """
+    try:
+        frontmatter = parse_concept_document(content).frontmatter
+    except DocumentParseError as exc:
+        return (
+            _shape_finding(
+                "error",
+                f"could not parse frontmatter for v0.2 shape check: {exc}",
+                "frontmatter",
+                None,
+            ),
+        )
     key_lines = _top_level_key_lines(content)
     findings: list[ValidationFinding] = []
     if "sources" in frontmatter:

@@ -12,6 +12,7 @@ from okf_core import (
     scan_bundle,
     validate_bundle,
 )
+from okf_core.validation import _provenance_lifecycle_findings
 from okf_core.config import BundleConfig, OkfConfig
 
 
@@ -465,6 +466,80 @@ def test_validate_bundle_errors_when_generated_at_is_null(tmp_path: Path) -> Non
     assert finding.field == "generated.at"
     assert finding.line == 3
     assert "datetime" in finding.message
+
+
+def test_shape_check_reports_unparseable_frontmatter(tmp_path: Path) -> None:
+    findings = _provenance_lifecycle_findings(
+        tmp_path / "broken.md", "---\ntype: [\n---\nBody\n"
+    )
+
+    assert len(findings) == 1
+    assert findings[0].severity == "error"
+    assert findings[0].field == "frontmatter"
+    assert findings[0].line is None
+
+
+def test_validate_bundle_rejects_unquoted_yaml_date_source_resource(
+    tmp_path: Path,
+) -> None:
+    config, bundle, docs_root = _default_docs_bundle(tmp_path)
+    concept = docs_root / "dated.md"
+    _write_concept(
+        concept,
+        "---\ntype: concept\nsources:\n  - resource: 2026-09-23\n---\nBody\n",
+    )
+
+    findings = validate_bundle(bundle, config)
+
+    assert len(findings[concept]) == 1
+    assert findings[concept][0].severity == "error"
+    assert findings[concept][0].field == "sources"
+    assert "non-empty string 'resource'" in findings[concept][0].message
+
+
+def test_validate_bundle_accepts_quoted_date_source_resource(tmp_path: Path) -> None:
+    config, bundle, docs_root = _default_docs_bundle(tmp_path)
+    concept = docs_root / "quoted.md"
+    _write_concept(
+        concept,
+        "---\ntype: concept\nsources:\n  - resource: '2026-09-23'\n---\nBody\n",
+    )
+
+    findings = validate_bundle(bundle, config)
+
+    assert concept not in findings
+
+
+def test_validate_bundle_rejects_yaml_date_resource_on_a_warm_cache(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        """
+[defaults]
+bundle_root = "docs"
+
+[bundles.default]
+bundle_root = "docs"
+okf_cache_dir = ".okf-cache"
+""".strip(),
+        encoding="utf-8",
+    )
+    docs_root = tmp_path / "docs"
+    docs_root.mkdir()
+    concept = docs_root / "dated.md"
+    _write_concept(
+        concept,
+        "---\ntype: concept\nsources:\n  - resource: 2026-09-23\n---\nBody\n",
+    )
+    config = load_config(config_path=config_path)
+    bundle = config.bundles["default"]
+
+    first = validate_bundle(bundle, config)
+    second = validate_bundle(bundle, config)
+
+    assert "non-empty string 'resource'" in first[concept][0].message
+    assert second[concept] == first[concept]
 
 
 def test_validate_bundle_warns_on_calendar_date_stale_after(tmp_path: Path) -> None:
