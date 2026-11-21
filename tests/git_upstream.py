@@ -26,6 +26,7 @@ class GitUpstream:
             GIT_CONFIG_GLOBAL=os.devnull,
             GIT_ALLOW_PROTOCOL="file",
             GIT_TERMINAL_PROMPT="0",
+            LC_ALL="C",
         )
         self._git("init", "--bare", "-b", "main", str(self.path))
 
