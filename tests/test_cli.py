@@ -313,6 +313,74 @@ def test_validate_no_findings_exits_zero(tmp_path: Path) -> None:
     assert data["findings"] == {}
 
 
+def test_validate_json_reports_each_malformed_v02_field(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    concept = tmp_path / "malformed.md"
+    concept.write_text(
+        "---\n"
+        "type: concept\n"
+        "sources: nope\n"
+        "generated: nope\n"
+        "verified: nope\n"
+        "status: approved\n"
+        "stale_after: nope\n"
+        "---\n"
+        "Body\n",
+        encoding="utf-8",
+    )
+
+    result = _runner().invoke(cli, ["validate", "--config", str(config_path)])
+
+    assert result.exit_code == 1
+    data = json.loads(result.stdout)
+    reported = data["findings"][str(concept)]
+    by_field = {finding["field"]: finding for finding in reported}
+    assert set(by_field) == {
+        "sources",
+        "generated",
+        "verified",
+        "status",
+        "stale_after",
+    }
+    assert all(finding["severity"] == "error" for finding in reported)
+    assert all(isinstance(finding["line"], int) for finding in reported)
+    assert "5 errors" in result.stderr
+
+
+def test_validate_calendar_date_stale_after_is_a_warning(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    concept = tmp_path / "stale.md"
+    concept.write_text(
+        "---\ntype: concept\nstale_after: 2026-09-23\n---\nBody\n",
+        encoding="utf-8",
+    )
+
+    result = _runner().invoke(cli, ["validate", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["findings"][str(concept)] == [
+        {
+            "severity": "warning",
+            "message": (
+                "stale_after is a calendar date; OKF v0.2 §5.5 defines an "
+                "absolute instant (an ISO 8601 datetime with a UTC offset). "
+                "A YYYY-MM-DD date is the form stamp_stale_after writes, so "
+                "it is a warning rather than an error"
+            ),
+            "field": "stale_after",
+            "line": 3,
+        }
+    ]
+    assert "1 warnings" in result.stderr
+
+
 def test_validate_errors_exit_1(tmp_path: Path) -> None:
     config_path = tmp_path / "okf-core.toml"
     config_path.write_text(

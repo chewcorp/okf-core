@@ -358,8 +358,11 @@ def validate(config_path: str | None, bundle_name: str, quiet: bool) -> None:
     regeneration (advisory warnings only; never affects the exit code), and
     every existing log.md for OKF v0.2 §9 date-heading format (ISO 8601
     YYYY-MM-DD) and newest-first section order (error severity; affects the
-    exit code). Bundles without log.md are unchanged. Emits findings as JSON
-    unless quiet is True.
+    exit code). Bundles without log.md are unchanged. When present, the v0.2
+    fields `sources`, `generated`, `verified`, `status`, and `stale_after`
+    are checked for spec shape (errors). A `generated` record that omits
+    `at`, and a calendar-date `stale_after`, are warnings. Emits findings as
+    JSON unless quiet is True.
     """
     cfg, bundle = _load(config_path, bundle_name)
     findings = validate_bundle(bundle, cfg)

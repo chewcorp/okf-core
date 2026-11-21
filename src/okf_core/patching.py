@@ -958,6 +958,22 @@ def stamp_generated(
     return apply_document_change(bundle, plan)
 
 
+def _validate_status_value(path: Path, status: Any) -> str:
+    """Validate ``status`` as one OKF v0.2 §5.4 lifecycle value.
+
+    ``draft``, ``stable``, and ``deprecated`` are the only accepted values.
+    Shared by ``plan_stamp_status`` and read-side bundle validation so the
+    two paths cannot drift.
+    """
+    if isinstance(status, str) and status in _VALID_STATUS_VALUES:
+        return status
+    raise DocumentChangePlanningError(
+        path,
+        "status must be one of 'draft', 'stable', 'deprecated' "
+        f"(OKF v0.2 §5.4): {status!r}",
+    )
+
+
 def plan_stamp_status(
     bundle: BundleConfig,
     path: Path | str,
@@ -971,13 +987,8 @@ def plan_stamp_status(
     ``status`` to its already-current value (AC3) is a no-op.
     """
     resolved_path = Path(path)
-    if not isinstance(status, str) or status not in _VALID_STATUS_VALUES:
-        raise DocumentChangePlanningError(
-            resolved_path,
-            "status must be one of 'draft', 'stable', 'deprecated' "
-            f"(OKF v0.2 §5.4): {status!r}",
-        )
-    return plan_frontmatter_merge(bundle, resolved_path, {"status": status})
+    validated = _validate_status_value(resolved_path, status)
+    return plan_frontmatter_merge(bundle, resolved_path, {"status": validated})
 
 
 def stamp_status(
