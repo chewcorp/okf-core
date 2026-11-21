@@ -42,7 +42,7 @@ profile = "strict"
     # valid.md: perfectly matches the strict profile
     _write_concept(
         product_root / "valid.md",
-        "---\ntype: concept\ntitle: Valid Document\nstatus: approved\n---\nBody\n",
+        "---\ntype: concept\ntitle: Valid Document\nstatus: stable\n---\nBody\n",
     )
 
     # invalid_type.md: misses required type field (base conformance error)
@@ -245,6 +245,244 @@ bundle_root = "docs"
             message="sources[].id 'unused' is not referenced by any footnote",
             field="unused",
             line=None,
+        ),
+    )
+
+
+_CONFORMANT_V02 = """\
+---
+type: concept
+status: stable
+generated: { by: reference_agent/gemini-2.5-pro, at: 2026-06-20T22:53:05Z }
+verified:
+  - { by: human:ahormati, at: 2026-06-25T09:00:00Z }
+stale_after: 2026-09-23T00:00:00Z
+sources:
+  - id: ga4-schema
+    resource: https://developers.google.com/analytics/bigquery/export-schema
+    author: not-an-actor
+---
+The events table is sharded daily.[^ga4-schema]
+"""
+
+_GENERATED_AT_ABSENT = (
+    "generated.at is absent; only generated.by is required (OKF v0.2 §5.2). "
+    "When at is present it must be an ISO 8601 datetime with a UTC offset"
+)
+_STALE_AFTER_CALENDAR_DATE = (
+    "stale_after is a calendar date; OKF v0.2 §5.5 defines an absolute "
+    "instant (an ISO 8601 datetime with a UTC offset). A YYYY-MM-DD date "
+    "is the form stamp_stale_after writes, so it is a warning rather than "
+    "an error"
+)
+
+
+def test_validate_bundle_accepts_conformant_v02_frontmatter(tmp_path: Path) -> None:
+    """A document using the spec shapes of all five v0.2 fields, including a
+    credibility signal the source-upsert validator does not schema-check,
+    adds no findings. The matching footnote keeps attribution quiet too."""
+    config, bundle, docs_root = _default_docs_bundle(tmp_path)
+    concept = docs_root / "conformant.md"
+    _write_concept(concept, _CONFORMANT_V02)
+
+    findings = validate_bundle(bundle, config)
+
+    assert concept not in findings
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "---\ntype: concept\nverified: { by: human:ahormati, at: 2026-06-25T09:00:00Z }\n---\nBody\n",
+        "---\ntype: concept\nsources:\n  - resource: https://example.com\n    id:\n---\nBody\n",
+        "---\ntype: concept\ngenerated: { by: human:alice, at: 2026-06-20T22:53:05Z, note: kept }\n---\nBody\n",
+    ],
+    ids=["bare-verified-mapping", "null-source-id", "extra-generated-key"],
+)
+def test_validate_bundle_tolerates_spec_permissive_v02_shapes(
+    tmp_path: Path, content: str
+) -> None:
+    config, bundle, docs_root = _default_docs_bundle(tmp_path)
+    concept = docs_root / "permissive.md"
+    _write_concept(concept, content)
+
+    findings = validate_bundle(bundle, config)
+
+    assert concept not in findings
+
+
+@pytest.mark.parametrize(
+    ("content", "field", "message_part", "line"),
+    [
+        (
+            "---\ntype: concept\nsources: nope\n---\nBody\n",
+            "sources",
+            "must be a list",
+            3,
+        ),
+        (
+            "---\ntype: concept\nsources:\n  - nope\n---\nBody\n",
+            "sources",
+            "must be a mapping",
+            3,
+        ),
+        (
+            "---\ntype: concept\nsources:\n  - title: missing\n---\nBody\n",
+            "sources",
+            "non-empty string 'resource'",
+            3,
+        ),
+        (
+            "---\ntype: concept\nsources:\n  - resource: https://example.com\n    id: 1\n---\nBody\n",
+            "sources",
+            "non-empty string",
+            3,
+        ),
+        (
+            "---\ntype: concept\ngenerated: nope\n---\nBody\n",
+            "generated",
+            "must be a mapping",
+            3,
+        ),
+        (
+            "---\ntype: concept\ngenerated: { by: alice, at: 2026-06-20T22:53:05Z }\n---\nBody\n",
+            "generated.by",
+            "actor string",
+            3,
+        ),
+        (
+            "---\ntype: concept\ngenerated: { by: human:alice, at: 2026-06-20T22:53:05 }\n---\nBody\n",
+            "generated.at",
+            "UTC offset",
+            3,
+        ),
+        (
+            "---\ntype: concept\nverified: nope\n---\nBody\n",
+            "verified",
+            "must be a mapping or list",
+            3,
+        ),
+        (
+            "---\ntype: concept\nverified:\n  - { by: nope, at: 2026-06-25T09:00:00Z }\n---\nBody\n",
+            "verified",
+            "actor string",
+            3,
+        ),
+        (
+            "---\ntype: concept\nstatus: approved\n---\nBody\n",
+            "status",
+            "draft",
+            3,
+        ),
+        (
+            "---\ntype: concept\nstatus: 1\n---\nBody\n",
+            "status",
+            "deprecated",
+            3,
+        ),
+        (
+            "---\ntype: concept\nstale_after: nope\n---\nBody\n",
+            "stale_after",
+            "ISO 8601 datetime",
+            3,
+        ),
+        (
+            "---\ntype: concept\nstale_after: 2026-09-23T00:00:00\n---\nBody\n",
+            "stale_after",
+            "UTC offset",
+            3,
+        ),
+    ],
+)
+def test_validate_bundle_reports_malformed_v02_frontmatter(
+    tmp_path: Path, content: str, field: str, message_part: str, line: int
+) -> None:
+    config, bundle, docs_root = _default_docs_bundle(tmp_path)
+    concept = docs_root / "malformed.md"
+    _write_concept(concept, content)
+
+    findings = validate_bundle(bundle, config)
+
+    assert findings[concept] == (
+        ValidationFinding(
+            severity="error",
+            message=findings[concept][0].message,
+            field=field,
+            line=line,
+        ),
+    )
+    assert message_part in findings[concept][0].message
+
+
+def test_validate_bundle_reports_each_malformed_source_entry(tmp_path: Path) -> None:
+    config, bundle, docs_root = _default_docs_bundle(tmp_path)
+    concept = docs_root / "sources.md"
+    _write_concept(
+        concept,
+        "---\ntype: concept\nsources:\n  - title: missing\n  - nope\n---\nBody\n",
+    )
+
+    findings = validate_bundle(bundle, config)
+
+    assert [finding.field for finding in findings[concept]] == ["sources", "sources"]
+    assert all(finding.severity == "error" for finding in findings[concept])
+    assert all(finding.line == 3 for finding in findings[concept])
+
+
+def test_validate_bundle_warns_when_generated_omits_at(tmp_path: Path) -> None:
+    config, bundle, docs_root = _default_docs_bundle(tmp_path)
+    concept = docs_root / "generated.md"
+    _write_concept(
+        concept,
+        "---\ntype: concept\ngenerated:\n  by: human:alice\n---\nBody\n",
+    )
+
+    findings = validate_bundle(bundle, config)
+
+    assert findings[concept] == (
+        ValidationFinding(
+            severity="warning",
+            message=_GENERATED_AT_ABSENT,
+            field="generated.at",
+            line=3,
+        ),
+    )
+
+
+def test_validate_bundle_errors_when_generated_at_is_null(tmp_path: Path) -> None:
+    config, bundle, docs_root = _default_docs_bundle(tmp_path)
+    concept = docs_root / "generated.md"
+    _write_concept(
+        concept,
+        "---\ntype: concept\ngenerated:\n  by: human:alice\n  at:\n---\nBody\n",
+    )
+
+    findings = validate_bundle(bundle, config)
+
+    assert len(findings[concept]) == 1
+    finding = findings[concept][0]
+    assert finding.severity == "error"
+    assert finding.field == "generated.at"
+    assert finding.line == 3
+    assert "datetime" in finding.message
+
+
+def test_validate_bundle_warns_on_calendar_date_stale_after(tmp_path: Path) -> None:
+    config, bundle, docs_root = _default_docs_bundle(tmp_path)
+    concept = docs_root / "stale.md"
+    _write_concept(
+        concept,
+        "---\ntype: concept\nstale_after: 2026-09-23\n---\nBody\n",
+    )
+
+    findings = validate_bundle(bundle, config)
+
+    assert findings[concept] == (
+        ValidationFinding(
+            severity="warning",
+            message=_STALE_AFTER_CALENDAR_DATE,
+            field="stale_after",
+            line=3,
         ),
     )
 
@@ -531,7 +769,7 @@ profile = "strict"
     product_root.mkdir()
     _write_concept(
         product_root / "valid.md",
-        "---\ntype: concept\ntitle: Valid\nstatus: approved\n---\nBody\n",
+        "---\ntype: concept\ntitle: Valid\nstatus: stable\n---\nBody\n",
     )
     _write_concept(
         product_root / "invalid.md",
