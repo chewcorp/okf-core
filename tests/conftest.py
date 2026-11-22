@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
+from git_upstream import GitUpstream
 from hypothesis import settings
 
 # CI runners are slower and less consistent than local machines, so a
@@ -12,6 +14,13 @@ from hypothesis import settings
 # raising again the next time CI gets slower.
 settings.register_profile("ci", deadline=None)
 settings.load_profile("ci")
+
+
+@pytest.fixture
+def git_upstream(tmp_path: Path) -> GitUpstream:
+    if shutil.which("git") is None:
+        pytest.skip("git is not installed")
+    return GitUpstream(tmp_path)
 
 
 @pytest.fixture(autouse=True)
