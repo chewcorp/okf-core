@@ -1099,6 +1099,47 @@ bundle_root = "missing"
     assert findings == {}
 
 
+@pytest.mark.parametrize(
+    ("include", "relative_path", "expected", "symlinked_parent"),
+    [
+        ("vault/**/*.md", ".opencode/skills/okf/templates/log.md", (), False),
+        ("vault/**/*.md", "vault/log.md", (_FRIDAY_HEADING_FINDING,), False),
+        ("vault/../vault/*.md", "vault/log.md", (_FRIDAY_HEADING_FINDING,), False),
+        ("alias/../vault/*.md", "vault/log.md", (), True),
+    ],
+    ids=[
+        "outside_include",
+        "inside_include",
+        "include_with_parent_segment",
+        "symlink_before_parent_segment",
+    ],
+)
+def test_validate_bundle_respects_include_for_log_md(
+    tmp_path: Path,
+    include: str,
+    relative_path: str,
+    expected: tuple[ValidationFinding, ...],
+    symlinked_parent: bool,
+) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "."\ninclude = ["{include}"]\n',
+        encoding="utf-8",
+    )
+    log_path = tmp_path / relative_path
+    _write_log(log_path, _FRIDAY_HEADING_LOG)
+    if symlinked_parent:
+        target = tmp_path / "other" / "nested"
+        target.mkdir(parents=True)
+        (tmp_path / "alias").symlink_to(target, target_is_directory=True)
+        _write_log(tmp_path / "other" / "vault" / "log.md", _FRIDAY_HEADING_LOG)
+
+    config = load_config(config_path=config_path)
+    findings = validate_bundle(config.bundles["default"], config)
+
+    assert findings == ({log_path: expected} if expected else {})
+
+
 def test_validate_bundle_skips_excluded_log_md(tmp_path: Path) -> None:
     config_path = tmp_path / "okf-core.toml"
     config_path.write_text(
