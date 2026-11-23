@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import os
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from hashlib import sha256
@@ -180,7 +181,16 @@ def _find_stable_id_conflicts(
 
 def _iter_include_glob_matches(root: Path, bundle: BundleConfig) -> Iterator[Path]:
     for pattern in bundle.include:
-        yield from root.glob(pattern)
+        for path in root.glob(pattern):
+            if ".." in path.parts:
+                normalized = Path(os.path.normpath(path))
+                # A symlink before ".." can make the normalized path point elsewhere.
+                try:
+                    if path.parent.samefile(normalized.parent):
+                        path = normalized
+                except OSError:
+                    pass
+            yield path
 
 
 def _iter_included_paths(root: Path, bundle: BundleConfig) -> tuple[Path, ...]:
