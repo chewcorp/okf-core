@@ -11,6 +11,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`[bundles.<name>.source]`** (`BundleSource` on `BundleConfig`, `load_config`, `okf list-bundles`): a bundle may declare a git `url`, an optional `ref` (branch, tag, or full 40-character commit SHA; omitted means the upstream default branch and stays unresolved), and an optional `subpath`. Unknown source keys, a missing or empty `url`, a `scheme://` URL other than `file://` with no host, and an empty, whitespace-only, or leading-`-` `ref` fail closed with `ConfigError` (CLI exit 2). `list-bundles` emits `source` (`null` when the bundle has none). Loading the table does not fetch or pin. (CCP-1105)
 - **v0.2 provenance, trust, and lifecycle shape checks in `validate_bundle` / `okf validate`**: a present `sources`, `generated`, `verified`, `status`, or `stale_after` value is checked with the same validators as `source_upsert` and the `stamp-*` writes. Spec-shape violations are errors, including an offset-naive timestamp and an unknown `status`. The check parses the document rather than the scan's stringified frontmatter, so an unquoted YAML date does not pass a string field. A `generated` record that omits `at`, and a calendar-date `stale_after`, are warnings. Absent fields, extra keys, and source credibility signals are not findings. The attribution consistency check is unchanged. (#221)
 
+### Fixed
+
+- `okf validate` and `validate_bundle` check `log.md` conformance only within the bundle's configured include scope. (#250)
+
 ## [0.6.0] - 2026-11-15
 
 ### Added
@@ -34,8 +38,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`okf graph-report` docs and guardrails**: README, orientation, CLI help, and graph-report docstrings now agree on the shipped flags, the gitignored `wiki-graph-out/` artifact tree, diagnostics-not-quotas reading, and the read-only/no-merge scope so generated output is not mistaken for wiki writes or onboarding criteria (#235).
 
 ### Fixed
-
-- `okf validate` and `validate_bundle` check `log.md` conformance only within the bundle's configured include scope. (#250)
 
 - `parse_log` and `parse_index` no longer raise `ValueError` when an embedded link contains an autolink in its text (CCP-1048).
 - **`markdown-it-py` floor raised to `>= 4.3`**: picks up 4.3.0's quadratic-time parsing security fixes. Retires `test_plan_rejects_content_that_tokenizes_differently_once_labelled`, whose fixture relied on a code-span bug 4.3.0 fixed (markdown-it-py#439) and which turned fresh CI installs red; a hypothesis search found no 4.3 replacement. (CCP-1047)
