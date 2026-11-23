@@ -286,7 +286,7 @@ The project uses `CHANGELOG.md` at the repo root following the [Keep a Changelog
   ```
   This parses the workflow matrix from `.github/workflows/test.yml` and spins up containerized pytest checks to detect version incompatibilities before raising a pull request.
 
-<!-- kitchen-cook-block v1 (source: chewcorp/kitchen docs/cook-block.md; copy verbatim) -->
+<!-- kitchen-cook-block v2 (source: chewcorp/kitchen docs/cook-block.md; copy verbatim) -->
 
 ## Cook rules
 
@@ -297,6 +297,12 @@ The project uses `CHANGELOG.md` at the repo root following the [Keep a Changelog
   PR yet). Say what blocks you, the options, and which one you recommend. Then
   carry on with every part that is not blocked. Never end a session on a
   question you only asked yourself.
+- Treat every review finding as a claim to test, not a fact. Before you change
+  code or reply, check the claimed behaviour with a test or against the live
+  system, and put that evidence in your reply. A finding that doesn't reproduce
+  is declined with that evidence, not fixed. If you can't check it, say so and
+  leave it for a human reviewer, unfixed. The held-for-a-human-reviewer reply
+  after the bot cap needs no check.
 - Answer every review finding on the GitHub PR, as a reply in its thread. Linear
   gets one line at most.
 - Resolve a thread only when you fixed what it raised. To decline, reply with
@@ -306,7 +312,8 @@ The project uses `CHANGELOG.md` at the repo root following the [Keep a Changelog
   reviewer. Comments from a human reviewer are always acted on and don't count
   toward the cap.
 - Do not merge.
-- If this repo's AGENTS.md lacks the marker line above, first open a separate PR
-  that adds this block verbatim, then branch the story from that PR.
+- If this repo's AGENTS.md lacks the marker line above, or carries an older
+  version of this block, first open a separate PR that adds or replaces this
+  block verbatim, then branch the story from that PR.
 
 <!-- /kitchen-cook-block -->
