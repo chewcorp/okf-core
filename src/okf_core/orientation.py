@@ -45,7 +45,7 @@ To interact with or integrate a bundle, start with these essential commands:
   ```sh
   okf list-concepts
   ```
-- **Validate**: Check the bundle for spec conformance and profile rules, the shapes of v0.2 `sources`, `generated`, `verified`, `status`, and `stale_after` when those fields are present, every directory's committed `index.md` for drift against its own content, and every existing `log.md` for OKF v0.2 §9 date headings (ISO 8601 `YYYY-MM-DD`, newest first). The README records which of those shape checks are errors and which are warnings.
+- **Validate**: Check the bundle for spec conformance and profile rules, the shapes of v0.2 `sources`, `generated`, `verified`, `status`, and `stale_after` when those fields are present, every directory's committed `index.md` for drift against its own content, and each `log.md` that matches the bundle's include globs and is not excluded for OKF v0.2 §9 date headings (ISO 8601 `YYYY-MM-DD`, newest first). The README records which of those shape checks are errors and which are warnings.
   ```sh
   okf validate
   ```

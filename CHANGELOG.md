@@ -35,6 +35,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `okf validate` and `validate_bundle` check `log.md` conformance only within the bundle's configured include scope. (#250)
+
 - `parse_log` and `parse_index` no longer raise `ValueError` when an embedded link contains an autolink in its text (CCP-1048).
 - **`markdown-it-py` floor raised to `>= 4.3`**: picks up 4.3.0's quadratic-time parsing security fixes. Retires `test_plan_rejects_content_that_tokenizes_differently_once_labelled`, whose fixture relied on a code-span bug 4.3.0 fixed (markdown-it-py#439) and which turned fresh CI installs red; a hypothesis search found no 4.3 replacement. (CCP-1047)
 - **Search and migrate-db error channels** (`search_concepts`, `find_unlinked_mentions`, `migrate_cache`): an unreadable cache file, a leftover `concept_fts` on a SQLite build without FTS5, and a leftover `concept_fts` that cannot be queried now raise `SearchConfigError` (CLI exit 2) instead of leaking `sqlite3.Error`. `find_unlinked_mentions(refresh=False)` returns no suggestions when the persistent index is absent, instead of creating `temp.unlinked_mentions_fts`. `migrate_cache` wraps a filesystem error creating the cache directory as `CacheMigrationError`. (#158)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import datetime
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path, PurePosixPath
@@ -178,16 +178,20 @@ def _find_stable_id_conflicts(
     return problems
 
 
+def _iter_include_glob_matches(root: Path, bundle: BundleConfig) -> Iterator[Path]:
+    for pattern in bundle.include:
+        yield from root.glob(pattern)
+
+
 def _iter_included_paths(root: Path, bundle: BundleConfig) -> tuple[Path, ...]:
     paths: set[Path] = set()
-    for pattern in bundle.include:
-        for path in root.glob(pattern):
-            resolved_path = path.resolve(strict=False)
-            if not resolved_path.is_file():
-                continue
-            if _is_excluded(resolved_path, root, bundle):
-                continue
-            paths.add(resolved_path)
+    for path in _iter_include_glob_matches(root, bundle):
+        resolved_path = path.resolve(strict=False)
+        if not resolved_path.is_file():
+            continue
+        if _is_excluded(resolved_path, root, bundle):
+            continue
+        paths.add(resolved_path)
     return tuple(sorted(paths, key=str))
 
 

@@ -26,7 +26,12 @@ from okf_core.index import (
     parse_index,
 )
 from okf_core.logs import ParsedLog, log_conformance_findings, parse_log
-from okf_core.manifest import BundleManifest, _is_excluded, scan_bundle
+from okf_core.manifest import (
+    BundleManifest,
+    _is_excluded,
+    _iter_include_glob_matches,
+    scan_bundle,
+)
 from okf_core.patching import (
     _validate_actor_string,
     _validate_date_value,
@@ -48,11 +53,11 @@ def validate_bundle(
 ) -> dict[Path, tuple[ValidationFinding, ...]]:
     """Validate concept documents, index drift, and existing log.md files.
 
-    After concept and index-drift checks, every existing ``log.md`` is
-    checked for OKF v0.2 §9 conformance. Date headings MUST be ISO 8601
-    ``YYYY-MM-DD`` calendar dates, and date-grouped sections MUST be newest
-    first. Findings are keyed at the ``log.md`` path. A bundle with no
-    ``log.md`` skips this check.
+    After concept and index-drift checks, every existing ``log.md`` matching
+    the bundle's include globs and not excluded is checked for OKF v0.2 §9
+    conformance. Date headings MUST be ISO 8601 ``YYYY-MM-DD`` calendar dates,
+    and date-grouped sections MUST be newest first. Findings are keyed at
+    the ``log.md`` path.
 
     Concept checks also include OKF v0.2 provenance, trust, and lifecycle
     shape (``sources``, ``generated``, ``verified``, ``status``,
@@ -383,7 +388,7 @@ def _stale_after_findings(
 
 
 def _committed_log_paths(bundle: BundleConfig) -> tuple[Path, ...]:
-    """Collect every existing ``log.md`` under the bundle root.
+    """Collect existing ``log.md`` paths under the root that are in scope.
 
     Spec §9 says ``log.md`` MAY appear at any hierarchy level, so this walk
     is not limited to concept-bearing directories. The exact name ``log.md``
@@ -392,12 +397,19 @@ def _committed_log_paths(bundle: BundleConfig) -> tuple[Path, ...]:
     root = bundle.bundle_root.resolve()
     if not root.is_dir():
         return ()
+    included = {
+        path
+        for path in _iter_include_glob_matches(root, bundle)
+        if path.name == "log.md"
+    }
     paths: list[Path] = []
     for directory, _dirnames, filenames in os.walk(root):
         if "log.md" in filenames:
             log_path = Path(directory) / "log.md"
-            if _is_bundle_file(log_path, root) and not _is_excluded(
-                log_path, root, bundle
+            if (
+                log_path in included
+                and _is_bundle_file(log_path, root)
+                and not _is_excluded(log_path, root, bundle)
             ):
                 paths.append(log_path)
     return tuple(sorted(paths))

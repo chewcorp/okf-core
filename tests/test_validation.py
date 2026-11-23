@@ -1099,6 +1099,31 @@ bundle_root = "missing"
     assert findings == {}
 
 
+@pytest.mark.parametrize(
+    ("relative_path", "expected"),
+    [
+        (".opencode/skills/okf/templates/log.md", ()),
+        ("vault/log.md", (_FRIDAY_HEADING_FINDING,)),
+    ],
+    ids=["outside_include", "inside_include"],
+)
+def test_validate_bundle_respects_include_for_log_md(
+    tmp_path: Path, relative_path: str, expected: tuple[ValidationFinding, ...]
+) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        '[defaults]\nbundle_root = "."\ninclude = ["vault/**/*.md"]\n',
+        encoding="utf-8",
+    )
+    log_path = tmp_path / relative_path
+    _write_log(log_path, _FRIDAY_HEADING_LOG)
+
+    config = load_config(config_path=config_path)
+    findings = validate_bundle(config.bundles["default"], config)
+
+    assert findings == ({log_path: expected} if expected else {})
+
+
 def test_validate_bundle_skips_excluded_log_md(tmp_path: Path) -> None:
     config_path = tmp_path / "okf-core.toml"
     config_path.write_text(
