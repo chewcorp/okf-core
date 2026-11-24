@@ -356,9 +356,9 @@ def validate(config_path: str | None, bundle_name: str, quiet: bool) -> None:
     Checks every concept document against the configured profile, every
     concept-bearing directory's committed index.md for drift against a fresh
     regeneration (advisory warnings only; never affects the exit code), and
-    every existing log.md for OKF v0.2 §9 date-heading format (ISO 8601
-    YYYY-MM-DD) and newest-first section order (error severity; affects the
-    exit code). Bundles without log.md are unchanged. When present, the v0.2
+    every existing log.md matching the bundle's include globs and not excluded
+    for OKF v0.2 §9 date-heading format (ISO 8601 YYYY-MM-DD) and newest-first
+    section order (error severity; affects the exit code). When present, the v0.2
     fields `sources`, `generated`, `verified`, `status`, and `stale_after`
     are checked for spec shape (errors). A `generated` record that omits
     `at`, and a calendar-date `stale_after`, are warnings. Emits findings as
